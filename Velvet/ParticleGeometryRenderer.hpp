@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MeshRenderer.hpp"
-#define SOLVER_CPU
+//#define SOLVER_CPU
 
 namespace Velvet
 {

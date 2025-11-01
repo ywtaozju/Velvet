@@ -121,6 +121,30 @@ public:
 	}
 };
 
+class SceneClothSuspended : public Scene
+{
+public:
+	SceneClothSuspended() { name = "Cloth / Suspended"; }
+
+	void PopulateActors(GameInstance* game)  override
+	{
+		SpawnCameraAndLight(game);
+		SpawnInfinitePlane(game);
+
+		int clothResolution = 40;
+		auto cloth = SpawnCloth(game, clothResolution);
+		cloth->Initialize(glm::vec3(0.0f, 3.0f, 1.0f), glm::vec3(1.0), glm::vec3(90, 0, 0));
+
+#ifdef SOLVER_CPU
+		auto clothObj = cloth->GetComponent<VtClothObjectCPU>();
+#else		
+		auto clothObj = cloth->GetComponent<VtClothObjectGPU>();
+#endif	
+		if (clothObj)
+			clothObj->SetAttachedIndices({ 0, clothResolution });
+
+	}
+};
 
 class SceneClothAttach : public Scene
 {
@@ -368,6 +392,7 @@ int main()
 	//=====================================
 	
 	vector<shared_ptr<Scene>> scenes = {
+		make_shared<SceneClothSuspended>(),
 		make_shared<SceneClothAttach>(),
 		make_shared<SceneClothCollision>(),
 		make_shared<SceneClothSelfCollision>(),

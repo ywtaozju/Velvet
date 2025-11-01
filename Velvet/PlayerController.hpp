@@ -25,6 +25,7 @@ namespace Velvet
 		{
 			Global::game->onMouseMove.Register(OnMouseMove);
 			Global::game->godUpdate.Register(GodUpdate);
+			Global::game->onMouseScroll.Register(OnMouseScroll);
 		}
 
 		static void GodUpdate()
@@ -66,11 +67,24 @@ namespace Velvet
 		static void OnMouseScroll(double xoffset, double yoffset)
 		{
 			auto camera = Global::camera;
-			camera->zoom -= (float)yoffset;
-			if (camera->zoom < 1.0f)
-				camera->zoom = 1.0f;
-			if (camera->zoom > 45.0f)
-				camera->zoom = 45.0f;
+			if (!camera) return;
+
+			// 可选：保留缩放功能，使用Ctrl+滚轮
+			if (Global::input->GetKey(GLFW_KEY_LEFT_CONTROL) || Global::input->GetKey(GLFW_KEY_RIGHT_CONTROL))
+			{
+				camera->zoom -= (float)yoffset;
+				if (camera->zoom < 1.0f)
+					camera->zoom = 1.0f;
+				if (camera->zoom > 45.0f)
+					camera->zoom = 45.0f;
+			}
+			else
+			{
+				// 控制摄像机前进后退
+				const float scrollSpeed = 2.0f; // 滚轮移动速度倍数
+				glm::vec3 movement = camera->front() * (float)yoffset * scrollSpeed;
+				camera->transform()->position += movement;
+			}
 		}
 
 		static void OnMouseMove(double xpos, double ypos)
