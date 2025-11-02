@@ -512,16 +512,19 @@ namespace Velvet
 		const float maxSpeed,
 		const float deltaTime)
 	{
-		if (!h_params.enableConvergenceCheck) return;
+		if (!h_params.enableConvergenceCheck || numParticles == 0) return;
 		
 		ScopedTimerGPU timer("Solver_Convergence");
 		
 		// Allocate temporary device arrays
-		float* d_constraintViolations;
-		float* d_positionChanges;
-		int* d_velocityLimitFlags;
+		float* d_constraintViolations = nullptr;
+		float* d_positionChanges = nullptr;
+		int* d_velocityLimitFlags = nullptr;
 		
-		cudaMalloc(&d_constraintViolations, numConstraints * sizeof(float));
+		if (numConstraints > 0)
+		{
+			cudaMalloc(&d_constraintViolations, numConstraints * sizeof(float));
+		}
 		cudaMalloc(&d_positionChanges, numParticles * sizeof(float));
 		cudaMalloc(&d_velocityLimitFlags, numParticles * sizeof(int));
 		
@@ -532,49 +535,42 @@ namespace Velvet
 			positions, predicted, velocities, stretchIndices, stretchLengths,
 			numParticles, numConstraints, maxSpeed, deltaTime);
 		
-		// Use Thrust to reduce the arrays
-		thrust::device_ptr<float> thrust_constraintViolations(d_constraintViolations);
-		thrust::device_ptr<float> thrust_positionChanges(d_positionChanges);
-		thrust::device_ptr<int> thrust_velocityLimitFlags(d_velocityLimitFlags);
+		// Synchronize before reduction
+		cudaDeviceSynchronize();
 		
-		// Sum constraint violations
+		// Use Thrust to reduce the arrays
 		float totalConstraintViolation = 0.0f;
-		if (numConstraints > 0)
+		if (numConstraints > 0 && d_constraintViolations)
 		{
+			thrust::device_ptr<float> thrust_constraintViolations(d_constraintViolations);
 			totalConstraintViolation = thrust::reduce(thrust_constraintViolations, 
 				thrust_constraintViolations + numConstraints, 0.0f, thrust::plus<float>());
 		}
 		
 		// Sum position changes
-		float totalPositionChange = 0.0f;
-		if (numParticles > 0)
-		{
-			totalPositionChange = thrust::reduce(thrust_positionChanges, 
-				thrust_positionChanges + numParticles, 0.0f, thrust::plus<float>());
-		}
+		thrust::device_ptr<float> thrust_positionChanges(d_positionChanges);
+		float totalPositionChange = thrust::reduce(thrust_positionChanges, 
+			thrust_positionChanges + numParticles, 0.0f, thrust::plus<float>());
 		
 		// Count velocity limit triggers
-		int velocityLimitCount = 0;
-		if (numParticles > 0)
-		{
-			velocityLimitCount = thrust::reduce(thrust_velocityLimitFlags, 
-				thrust_velocityLimitFlags + numParticles, 0, thrust::plus<int>());
-		}
+		thrust::device_ptr<int> thrust_velocityLimitFlags(d_velocityLimitFlags);
+		int velocityLimitCount = thrust::reduce(thrust_velocityLimitFlags, 
+			thrust_velocityLimitFlags + numParticles, 0, thrust::plus<int>());
 		
-		// Store results
-		ConvergenceMetrics hostMetrics;
-		hostMetrics.totalConstraintViolation = totalConstraintViolation;
-		hostMetrics.totalPositionChange = totalPositionChange;
-		hostMetrics.velocityLimitCount = velocityLimitCount;
-		hostMetrics.totalParticleCount = numParticles;
-		
-		// Copy to host
-		cudaMemcpy(metrics, &hostMetrics, sizeof(ConvergenceMetrics), cudaMemcpyHostToDevice);
+		// Store results directly in the host metrics pointer
+		metrics->totalConstraintViolation = totalConstraintViolation;
+		metrics->totalPositionChange = totalPositionChange;
+		metrics->velocityLimitCount = velocityLimitCount;
+		metrics->totalParticleCount = numParticles;
 		
 		// Cleanup
-		cudaFree(d_constraintViolations);
+		if (d_constraintViolations) cudaFree(d_constraintViolations);
 		cudaFree(d_positionChanges);
 		cudaFree(d_velocityLimitFlags);
+		
+		// Debug output (can be removed later)
+		// printf("Debug: Constraints=%d, TotalViolation=%.6f, TotalPosChange=%.6f, VelLimitCount=%d\n", 
+		//        numConstraints, totalConstraintViolation, totalPositionChange, velocityLimitCount);
 	}
 
 }

@@ -31,7 +31,7 @@ namespace Velvet
 			m_colliders = Global::game->FindComponents<Collider>();
 			m_mouseGrabber.Initialize(&positions, &velocities, &invMasses);
 			
-			// Initialize convergence detection
+			// Initialize convergence detection - always initialize, even if disabled
 			InitializeConvergenceDetection();
 			//ShowDebugGUI();
 		}
@@ -250,7 +250,7 @@ namespace Velvet
 		MouseGrabber m_mouseGrabber;
 
 		// Convergence Detection Members
-		ConvergenceMetrics* d_convergenceMetrics;
+		ConvergenceMetrics* d_convergenceMetrics = nullptr; // Host memory for convergence metrics
 		static constexpr int CONVERGENCE_HISTORY_SIZE = 30;
 		deque<float> m_constraintViolationHistory;
 		deque<float> m_positionChangeHistory;
@@ -259,9 +259,11 @@ namespace Velvet
 
 		void InitializeConvergenceDetection()
 		{
-			if (Global::simParams.enableConvergenceCheck)
+			// Allocate host memory for convergence metrics
+			if (!d_convergenceMetrics)
 			{
-				cudaMalloc(&d_convergenceMetrics, sizeof(ConvergenceMetrics));
+				d_convergenceMetrics = new ConvergenceMetrics();
+				memset(d_convergenceMetrics, 0, sizeof(ConvergenceMetrics));
 			}
 		}
 
@@ -269,7 +271,7 @@ namespace Velvet
 		{
 			if (d_convergenceMetrics)
 			{
-				cudaFree(d_convergenceMetrics);
+				delete d_convergenceMetrics;
 				d_convergenceMetrics = nullptr;
 			}
 		}
@@ -277,6 +279,18 @@ namespace Velvet
 		void UpdateConvergenceMetrics()
 		{
 			if (!Global::simParams.enableConvergenceCheck || !d_convergenceMetrics) return;
+			
+			// Make sure we have constraints to check
+			if (stretchLengths.size() == 0)
+			{
+				// No constraints, set metrics to zero
+				Global::simParams.avgConstraintViolation = 0.0f;
+				Global::simParams.avgPositionChange = 0.0f;
+				Global::simParams.velocityLimitTriggerRatio = 0.0f;
+				Global::simParams.isConverged = true;
+				Global::simParams.convergenceFrameCount = 0;
+				return;
+			}
 
 			// Compute convergence metrics on GPU
 			ComputeConvergenceMetrics(
@@ -288,23 +302,19 @@ namespace Velvet
 				Global::simParams.maxSpeed,
 				Timer::fixedDeltaTime());
 
-			// Copy results back to host
-			ConvergenceMetrics hostMetrics;
-			cudaMemcpy(&hostMetrics, d_convergenceMetrics, sizeof(ConvergenceMetrics), cudaMemcpyDeviceToHost);
-
-			// Calculate averages
+				// Calculate averages
 			float avgConstraintViolation = 0.0f;
 			float avgPositionChange = 0.0f;
 			float velocityLimitTriggerRatio = 0.0f;
 
-			if (hostMetrics.totalParticleCount > 0)
+			if (d_convergenceMetrics->totalParticleCount > 0)
 			{
 				if (stretchLengths.size() > 0)
 				{
-					avgConstraintViolation = hostMetrics.totalConstraintViolation / (float)stretchLengths.size();
+					avgConstraintViolation = d_convergenceMetrics->totalConstraintViolation / (float)stretchLengths.size();
 				}
-				avgPositionChange = hostMetrics.totalPositionChange / (float)hostMetrics.totalParticleCount;
-				velocityLimitTriggerRatio = (float)hostMetrics.velocityLimitCount / (float)hostMetrics.totalParticleCount;
+				avgPositionChange = d_convergenceMetrics->totalPositionChange / (float)d_convergenceMetrics->totalParticleCount;
+				velocityLimitTriggerRatio = (float)d_convergenceMetrics->velocityLimitCount / (float)d_convergenceMetrics->totalParticleCount;
 			}
 
 			// Update history
@@ -345,6 +355,15 @@ namespace Velvet
 			Global::simParams.velocityLimitTriggerRatio = velocityLimitTriggerRatio;
 			Global::simParams.isConverged = isConverged;
 			Global::simParams.convergenceFrameCount = m_convergenceFrameCount;
+			
+			// Debug output (can be enabled for debugging)
+			static int debugCounter = 0;
+			if (++debugCounter % 60 == 0) // Print every 60 frames
+			{
+				printf("Convergence Debug: Violations=%.6f, PosChange=%.6f, VelRatio=%.3f%%, Converged=%s\n",
+					avgConstraintViolation, avgPositionChange, velocityLimitTriggerRatio * 100.0f,
+					isConverged ? "YES" : "NO");
+			}
 		}
 
 		bool CheckConvergence(float avgConstraintViolation, float avgPositionChange, float velocityLimitTriggerRatio)
