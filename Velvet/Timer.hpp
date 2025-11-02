@@ -219,6 +219,31 @@ namespace Velvet
 		{
 			return s_timer->m_fixedDeltaTime;
 		}
+
+		// New method to set fixed delta time
+		static void SetFixedDeltaTime(float newFixedDeltaTime)
+		{
+			if (newFixedDeltaTime > 0.0f && newFixedDeltaTime <= 1.0f) // Safety check: between 1 FPS and 1000 FPS
+			{
+				s_timer->m_fixedDeltaTime = newFixedDeltaTime;
+			}
+		}
+
+		// New method to set frame rate
+		static void SetPhysicsFrameRate(int frameRate)
+		{
+			if (frameRate > 0 && frameRate <= 1000) // Safety check: between 1 FPS and 1000 FPS
+			{
+				s_timer->m_fixedDeltaTime = 1.0f / (float)frameRate;
+			}
+		}
+
+		// New method to get current physics frame rate
+		static int GetPhysicsFrameRate()
+		{
+			return (int)(1.0f / s_timer->m_fixedDeltaTime);
+		}
+
 	private:
 		static Timer* s_timer;
 
@@ -232,7 +257,7 @@ namespace Velvet
 		int m_physicsFrameCount = 0;
 		float m_elapsedTime = 0.0f;
 		float m_deltaTime = 0.0f;
-		const float m_fixedDeltaTime = 1.0f / 60.0f;
+		float m_fixedDeltaTime = 1.0f / 60.0f; // Now can be modified at runtime
 
 		float m_lastUpdateTime = 0.0f;
 		float m_fixedUpdateTimer = 0.0f;

@@ -23,6 +23,9 @@ struct VtSimParams
 	int maxNumNeighbors				HOST_INIT(64);
 	float maxSpeed					HOST_INIT(50);						//!< The magnitude of particle velocity will be clamped to this value at the end of each step
 
+	// Timing control
+	int physicsFrameRate			HOST_INIT(60);						//!< Physics update frequency in FPS
+
 	// forces
 	glm::vec3 gravity				HOST_INIT(glm::vec3(0, -9.8f, 0));	//!< Constant acceleration applied to all particles
 	float bendCompliance			HOST_INIT(10.0f);
@@ -49,23 +52,7 @@ struct VtSimParams
 	//float wind[3];													//!< Constant acceleration applied to particles that belong to dynamic triangles, drag needs to be > 0 for wind to affect triangles
 	//int relaxationMode;												//!< How the relaxation is applied inside the solver
 
-	void OnGUI()
-	{
-		IMGUI_LEFT_LABEL(ImGui::SliderInt, "Num Substeps", &numSubsteps, 1, 20);
-		IMGUI_LEFT_LABEL(ImGui::SliderInt, "Num Iterations", &numIterations, 1, 20);
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Max Speed", &maxSpeed, 1e-2f, 100);
-		ImGui::Separator();
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat3, "Gravity", (float*)&gravity, -50, 50);
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Damping", &damping, 0, 10.0f);
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Friction", &friction, 0, 1);
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Collision Margin", &collisionMargin, 0, 0.5);
-		IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Self Collision", &enableSelfCollision);
-		IMGUI_LEFT_LABEL(ImGui::SliderInt, "Interleaved Hash", &interleavedHash, 1, 10);
-		ImGui::Separator();
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Relaxation Factor", &relaxationFactor, 0, 3.0);
-		//IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Bend Compliance", &bendCompliance, 1e-3, 100.0, "%.3f", ImGuiSliderFlags_Logarithmic);
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Long Range Stretch", &longRangeStretchiness, 1.0, 2.0, "%.3f");
-	}
+	void OnGUI();  // Declaration moved to separate cpp file for implementation
 };
 
 struct VtGameState

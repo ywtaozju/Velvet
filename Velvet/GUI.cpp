@@ -2,6 +2,7 @@
 
 #include "Scene.hpp"
 #include "VtEngine.hpp"
+#include "Timer.hpp"
 
 using namespace Velvet;
 
@@ -23,6 +24,41 @@ void HelpMarker(const char* desc)
 		ImGui::PopTextWrapPos();
 		ImGui::EndTooltip();
 	}
+}
+
+// Implementation of VtSimParams::OnGUI()
+void VtSimParams::OnGUI()
+{
+	// Update physics frame rate from Timer if different
+	int currentTimerFrameRate = Timer::GetPhysicsFrameRate();
+	if (physicsFrameRate != currentTimerFrameRate)
+	{
+		physicsFrameRate = currentTimerFrameRate;
+	}
+
+	// Physics Update Frequency control
+	if (IMGUI_LEFT_LABEL(ImGui::SliderInt, "Physics FPS", &physicsFrameRate, 10, 300))
+	{
+		Timer::SetPhysicsFrameRate(physicsFrameRate);
+	}
+	HelpMarker("Controls the physics simulation update frequency");
+	
+	ImGui::Separator();
+	
+	IMGUI_LEFT_LABEL(ImGui::SliderInt, "Num Substeps", &numSubsteps, 1, 20);
+	IMGUI_LEFT_LABEL(ImGui::SliderInt, "Num Iterations", &numIterations, 1, 20);
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Max Speed", &maxSpeed, 1e-2f, 100);
+	ImGui::Separator();
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat3, "Gravity", (float*)&gravity, -50, 50);
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Damping", &damping, 0, 10.0f);
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Friction", &friction, 0, 1);
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Collision Margin", &collisionMargin, 0, 0.5);
+	IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Self Collision", &enableSelfCollision);
+	IMGUI_LEFT_LABEL(ImGui::SliderInt, "Interleaved Hash", &interleavedHash, 1, 10);
+	ImGui::Separator();
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Relaxation Factor", &relaxationFactor, 0, 3.0);
+	//IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Bend Compliance", &bendCompliance, 1e-3, 100.0, "%.3f", ImGuiSliderFlags_Logarithmic);
+	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Long Range Stretch", &longRangeStretchiness, 1.0, 2.0, "%.3f");
 }
 
 struct SolverTiming
@@ -229,6 +265,8 @@ struct PerformanceStat
 			ImGui::TableNextColumn(); ImGui::Text("%d", physicsFrameCount);
 			ImGui::TableNextColumn(); ImGui::Text("Render FrameRate: ");
 			ImGui::TableNextColumn(); ImGui::Text("%d FPS", frameRate);
+			ImGui::TableNextColumn(); ImGui::Text("Physics FrameRate: ");
+			ImGui::TableNextColumn(); ImGui::Text("%d FPS", Timer::GetPhysicsFrameRate());
 			ImGui::TableNextColumn(); ImGui::Text("CPU time: ");
 			ImGui::TableNextColumn(); ImGui::Text("%.2f ms", cpuTime);
 			ImGui::TableNextColumn(); ImGui::Text("GPU time: "); 
