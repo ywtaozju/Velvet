@@ -453,8 +453,8 @@ namespace Velvet
 		float* constraintViolations,
 		float* positionChanges,
 		int* velocityLimitFlags,
-		CONST(glm::vec3*) positions,
-		CONST(glm::vec3*) predicted,
+		CONST(glm::vec3*) previousPositions,
+		CONST(glm::vec3*) currentPositions,
 		CONST(glm::vec3*) velocities,
 		CONST(int*) stretchIndices,
 		CONST(float*) stretchLengths,
@@ -472,7 +472,7 @@ namespace Velvet
 			int idx2 = stretchIndices[2 * id + 1];
 			float expectedDistance = stretchLengths[id];
 
-			glm::vec3 diff = predicted[idx1] - predicted[idx2];
+			glm::vec3 diff = currentPositions[idx1] - currentPositions[idx2];
 			float actualDistance = glm::length(diff);
 			
 			if (expectedDistance > 0)
@@ -489,21 +489,20 @@ namespace Velvet
 		// Compute position changes and velocity limits (one thread per particle)
 		if (id < numParticles)
 		{
-			// Position change magnitude
-			glm::vec3 posChange = predicted[id] - positions[id];
+			// Position change magnitude between frames
+			glm::vec3 posChange = currentPositions[id] - previousPositions[id];
 			positionChanges[id] = glm::length(posChange);
 			
-			// Velocity limit check
-			glm::vec3 velocity = velocities[id];
-			float velMagnitude = glm::length(velocity);
-			velocityLimitFlags[id] = (velMagnitude >= maxSpeed * 0.99f) ? 1 : 0; // 99% threshold to account for floating point precision
+			// Velocity limit check - check current velocity magnitude
+			float velMagnitude = glm::length(velocities[id]);
+			velocityLimitFlags[id] = (velMagnitude >= maxSpeed * 0.99f) ? 1 : 0;
 		}
 	}
 
 	void ComputeConvergenceMetrics(
 		ConvergenceMetrics* metrics,
-		CONST(glm::vec3*) positions,
-		CONST(glm::vec3*) predicted,
+		CONST(glm::vec3*) previousPositions,
+		CONST(glm::vec3*) currentPositions,
 		CONST(glm::vec3*) velocities,
 		CONST(int*) stretchIndices,
 		CONST(float*) stretchLengths,
@@ -532,7 +531,7 @@ namespace Velvet
 		uint maxThreads = max(numParticles, numConstraints);
 		CUDA_CALL(ComputeConvergenceMetrics_Kernel, maxThreads)(
 			d_constraintViolations, d_positionChanges, d_velocityLimitFlags,
-			positions, predicted, velocities, stretchIndices, stretchLengths,
+			previousPositions, currentPositions, velocities, stretchIndices, stretchLengths,
 			numParticles, numConstraints, maxSpeed, deltaTime);
 		
 		// Synchronize before reduction
@@ -568,9 +567,14 @@ namespace Velvet
 		cudaFree(d_positionChanges);
 		cudaFree(d_velocityLimitFlags);
 		
-		// Debug output (can be removed later)
-		// printf("Debug: Constraints=%d, TotalViolation=%.6f, TotalPosChange=%.6f, VelLimitCount=%d\n", 
-		//        numConstraints, totalConstraintViolation, totalPositionChange, velocityLimitCount);
+		// Debug output (can be enabled for debugging)
+		static int debugCounter = 0;
+		if (++debugCounter % 60 == 0) // Print every 60 calls
+		{
+			printf("GPU Debug: Violations=%.6f, PosChange=%.6f, VelCount=%d/%d (%.2f%%)\n",
+				totalConstraintViolation, totalPositionChange, velocityLimitCount, numParticles, 
+				numParticles > 0 ? 100.0f * velocityLimitCount / numParticles : 0.0f);
+		}
 	}
 
 }

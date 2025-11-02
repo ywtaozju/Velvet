@@ -105,13 +105,13 @@ namespace Velvet
 				Finalize(velocities, positions, predicted, substepTime);
 			}
 
-			// Convergence Detection
+			ComputeNormal(normals, positions, indices, (uint)(indices.size() / 3));
+
+			// Convergence Detection - MOVED AFTER Finalize to get correct position and velocity data
 			if (Global::simParams.enableConvergenceCheck)
 			{
 				UpdateConvergenceMetrics();
 			}
-
-			ComputeNormal(normals, positions, indices, (uint)(indices.size() / 3));
 
 			//==========================
 			// Sync
@@ -292,17 +292,33 @@ namespace Velvet
 				return;
 			}
 
-			// Compute convergence metrics on GPU
+			// Store previous positions before calling convergence check
+			static VtBuffer<glm::vec3> previousPositions;
+			if (previousPositions.size() != positions.size())
+			{
+				previousPositions.resize(positions.size());
+				// Copy current positions as "previous" on first run
+				cudaMemcpy(previousPositions.data(), (glm::vec3*)positions, 
+					positions.size() * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+			}
+
+			// Compute convergence metrics on GPU using previous positions vs current positions
 			ComputeConvergenceMetrics(
 				d_convergenceMetrics,
-				positions, predicted, velocities,
-				stretchIndices, stretchLengths,
+				previousPositions.data(),  // Use previous positions for comparison
+				(glm::vec3*)positions,     // Current positions (after Finalize)
+				velocities.data(),         // Current velocities
+				stretchIndices.data(), stretchLengths.data(),
 				Global::simParams.numParticles,
 				(uint)stretchLengths.size(),
 				Global::simParams.maxSpeed,
 				Timer::fixedDeltaTime());
 
-				// Calculate averages
+			// Update previous positions for next frame
+			cudaMemcpy(previousPositions.data(), (glm::vec3*)positions, 
+				positions.size() * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+
+			// Calculate averages
 			float avgConstraintViolation = 0.0f;
 			float avgPositionChange = 0.0f;
 			float velocityLimitTriggerRatio = 0.0f;
@@ -360,7 +376,7 @@ namespace Velvet
 			static int debugCounter = 0;
 			if (++debugCounter % 60 == 0) // Print every 60 frames
 			{
-				printf("Convergence Debug: Violations=%.6f, PosChange=%.6f, VelRatio=%.3f%%, Converged=%s\n",
+				printf("Host Debug: Violations=%.6f, PosChange=%.6f, VelRatio=%.3f%%, Converged=%s\n",
 					avgConstraintViolation, avgPositionChange, velocityLimitTriggerRatio * 100.0f,
 					isConverged ? "YES" : "NO");
 			}
