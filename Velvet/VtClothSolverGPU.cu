@@ -2,6 +2,8 @@
 #include "Common.cuh"
 #include "Common.hpp"
 #include "Timer.hpp"
+#include <thrust/device_ptr.h>
+#include <thrust/reduce.h>
 
 using namespace std;
 
@@ -444,6 +446,135 @@ namespace Velvet
 			CUDA_CALL(ComputeTriangleNormals, numTriangles)(normals, positions, indices, numTriangles);
 			CUDA_CALL(ComputeVertexNormals, h_params.numParticles)(normals);
 		}
+	}
+
+	// Convergence Detection Implementation
+	__global__ void ComputeConvergenceMetrics_Kernel(
+		float* constraintViolations,
+		float* positionChanges,
+		int* velocityLimitFlags,
+		CONST(glm::vec3*) positions,
+		CONST(glm::vec3*) predicted,
+		CONST(glm::vec3*) velocities,
+		CONST(int*) stretchIndices,
+		CONST(float*) stretchLengths,
+		const uint numParticles,
+		const uint numConstraints,
+		const float maxSpeed,
+		const float deltaTime)
+	{
+		uint id = blockIdx.x * blockDim.x + threadIdx.x;
+		
+		// Compute constraint violations (one thread per constraint)
+		if (id < numConstraints)
+		{
+			int idx1 = stretchIndices[2 * id];
+			int idx2 = stretchIndices[2 * id + 1];
+			float expectedDistance = stretchLengths[id];
+
+			glm::vec3 diff = predicted[idx1] - predicted[idx2];
+			float actualDistance = glm::length(diff);
+			
+			if (expectedDistance > 0)
+			{
+				float violation = abs(actualDistance - expectedDistance) / expectedDistance;
+				constraintViolations[id] = violation;
+			}
+			else
+			{
+				constraintViolations[id] = 0.0f;
+			}
+		}
+		
+		// Compute position changes and velocity limits (one thread per particle)
+		if (id < numParticles)
+		{
+			// Position change magnitude
+			glm::vec3 posChange = predicted[id] - positions[id];
+			positionChanges[id] = glm::length(posChange);
+			
+			// Velocity limit check
+			glm::vec3 velocity = velocities[id];
+			float velMagnitude = glm::length(velocity);
+			velocityLimitFlags[id] = (velMagnitude >= maxSpeed * 0.99f) ? 1 : 0; // 99% threshold to account for floating point precision
+		}
+	}
+
+	void ComputeConvergenceMetrics(
+		ConvergenceMetrics* metrics,
+		CONST(glm::vec3*) positions,
+		CONST(glm::vec3*) predicted,
+		CONST(glm::vec3*) velocities,
+		CONST(int*) stretchIndices,
+		CONST(float*) stretchLengths,
+		const uint numParticles,
+		const uint numConstraints,
+		const float maxSpeed,
+		const float deltaTime)
+	{
+		if (!h_params.enableConvergenceCheck) return;
+		
+		ScopedTimerGPU timer("Solver_Convergence");
+		
+		// Allocate temporary device arrays
+		float* d_constraintViolations;
+		float* d_positionChanges;
+		int* d_velocityLimitFlags;
+		
+		cudaMalloc(&d_constraintViolations, numConstraints * sizeof(float));
+		cudaMalloc(&d_positionChanges, numParticles * sizeof(float));
+		cudaMalloc(&d_velocityLimitFlags, numParticles * sizeof(int));
+		
+		// Launch kernel to compute metrics
+		uint maxThreads = max(numParticles, numConstraints);
+		CUDA_CALL(ComputeConvergenceMetrics_Kernel, maxThreads)(
+			d_constraintViolations, d_positionChanges, d_velocityLimitFlags,
+			positions, predicted, velocities, stretchIndices, stretchLengths,
+			numParticles, numConstraints, maxSpeed, deltaTime);
+		
+		// Use Thrust to reduce the arrays
+		thrust::device_ptr<float> thrust_constraintViolations(d_constraintViolations);
+		thrust::device_ptr<float> thrust_positionChanges(d_positionChanges);
+		thrust::device_ptr<int> thrust_velocityLimitFlags(d_velocityLimitFlags);
+		
+		// Sum constraint violations
+		float totalConstraintViolation = 0.0f;
+		if (numConstraints > 0)
+		{
+			totalConstraintViolation = thrust::reduce(thrust_constraintViolations, 
+				thrust_constraintViolations + numConstraints, 0.0f, thrust::plus<float>());
+		}
+		
+		// Sum position changes
+		float totalPositionChange = 0.0f;
+		if (numParticles > 0)
+		{
+			totalPositionChange = thrust::reduce(thrust_positionChanges, 
+				thrust_positionChanges + numParticles, 0.0f, thrust::plus<float>());
+		}
+		
+		// Count velocity limit triggers
+		int velocityLimitCount = 0;
+		if (numParticles > 0)
+		{
+			velocityLimitCount = thrust::reduce(thrust_velocityLimitFlags, 
+				thrust_velocityLimitFlags + numParticles, 0, thrust::plus<int>());
+		}
+		
+		// Store results
+		ConvergenceMetrics hostMetrics;
+		hostMetrics.totalConstraintViolation = totalConstraintViolation;
+		hostMetrics.totalPositionChange = totalPositionChange;
+		hostMetrics.velocityLimitCount = velocityLimitCount;
+		hostMetrics.totalParticleCount = numParticles;
+		
+		// Copy to host
+		cudaMemcpy(metrics, &hostMetrics, sizeof(ConvergenceMetrics), cudaMemcpyHostToDevice);
+		
+		// Cleanup
+		cudaFree(d_constraintViolations);
+		cudaFree(d_positionChanges);
+		cudaFree(d_velocityLimitFlags);
 	}
 
 }

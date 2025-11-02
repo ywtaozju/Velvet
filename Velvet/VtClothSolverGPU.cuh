@@ -96,6 +96,15 @@ namespace Velvet
 		}
 	};
 
+	// Convergence Detection Data Structure
+	struct ConvergenceMetrics
+	{
+		float totalConstraintViolation;
+		float totalPositionChange;
+		int velocityLimitCount;
+		int totalParticleCount;
+	};
+
 	void SetSimulationParams(VtSimParams* hostParams);
 
 	void InitializePositions(glm::vec3* positions, const int start, const int count, const glm::mat4 modelMatrix);
@@ -166,4 +175,17 @@ namespace Velvet
 		CONST(glm::vec3*) positions,
 		CONST(uint*) indices,
 		const uint numTriangles);
+
+	// Convergence Detection Functions
+	void ComputeConvergenceMetrics(
+		ConvergenceMetrics* metrics,
+		CONST(glm::vec3*) positions,
+		CONST(glm::vec3*) predicted,
+		CONST(glm::vec3*) velocities,
+		CONST(int*) stretchIndices,
+		CONST(float*) stretchLengths,
+		const uint numParticles,
+		const uint numConstraints,
+		const float maxSpeed,
+		const float deltaTime);
 }

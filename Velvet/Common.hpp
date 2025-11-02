@@ -48,6 +48,19 @@ struct VtSimParams
 	float particleDiameterScalar	HOST_INIT(1.5f);					//!< multiply original stretch length by this scalar to obtain particle diameter
 	float hashCellSizeScalar		HOST_INIT(1.5f);					//!< multiply particle diameter by this scalar to obtain hash cell size
 
+	// Convergence Detection Parameters
+	bool enableConvergenceCheck		HOST_INIT(false);				//!< Enable convergence detection
+	float convergenceThreshold		HOST_INIT(0.01f);				//!< Constraint violation threshold (0-1, percentage)
+	float positionChangeThreshold	HOST_INIT(1e-3f);				//!< Position change magnitude threshold (world space units)
+	float velocityLimitRatio		HOST_INIT(0.1f);				//!< Velocity limit trigger ratio threshold (0-1, percentage of particles hitting velocity limit)
+	
+	// Convergence Detection Runtime Metrics (Read-only, updated by solver)
+	float avgConstraintViolation	HOST_INIT(0.0f);				//!< Current average constraint violation
+	float avgPositionChange			HOST_INIT(0.0f);				//!< Current average position change magnitude  
+	float velocityLimitTriggerRatio	HOST_INIT(0.0f);				//!< Current velocity limit trigger ratio
+	bool isConverged				HOST_INIT(false);				//!< Current convergence state
+	int convergenceFrameCount		HOST_INIT(0);					//!< Consecutive converged frame count
+
 	// future updates
 	//float wind[3];													//!< Constant acceleration applied to particles that belong to dynamic triangles, drag needs to be > 0 for wind to affect triangles
 	//int relaxationMode;												//!< How the relaxation is applied inside the solver

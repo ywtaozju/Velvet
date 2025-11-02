@@ -8,6 +8,7 @@
 #include <cuda_gl_interop.h>
 #include <thrust/device_ptr.h>
 #include <thrust/transform.h>
+#include <deque>
 
 #include "helper_cuda.h"
 #include "Mesh.hpp"
@@ -29,6 +30,9 @@ namespace Velvet
 			Global::simParams.numParticles = 0;
 			m_colliders = Global::game->FindComponents<Collider>();
 			m_mouseGrabber.Initialize(&positions, &velocities, &invMasses);
+			
+			// Initialize convergence detection
+			InitializeConvergenceDetection();
 			//ShowDebugGUI();
 		}
 
@@ -51,6 +55,9 @@ namespace Velvet
 		{
 			positions.destroy();
 			normals.destroy();
+			
+			// Cleanup convergence detection resources
+			CleanupConvergenceDetection();
 		}
 
 		void Simulate()
@@ -96,6 +103,12 @@ namespace Velvet
 				}
 
 				Finalize(velocities, positions, predicted, substepTime);
+			}
+
+			// Convergence Detection
+			if (Global::simParams.enableConvergenceCheck)
+			{
+				UpdateConvergenceMetrics();
 			}
 
 			ComputeNormal(normals, positions, indices, (uint)(indices.size() / 3));
@@ -235,6 +248,113 @@ namespace Velvet
 		shared_ptr<SpatialHashGPU> m_spatialHash;
 		vector<Collider*> m_colliders;
 		MouseGrabber m_mouseGrabber;
+
+		// Convergence Detection Members
+		ConvergenceMetrics* d_convergenceMetrics;
+		static constexpr int CONVERGENCE_HISTORY_SIZE = 30;
+		deque<float> m_constraintViolationHistory;
+		deque<float> m_positionChangeHistory;
+		deque<float> m_velocityLimitRatioHistory;
+		int m_convergenceFrameCount = 0;
+
+		void InitializeConvergenceDetection()
+		{
+			if (Global::simParams.enableConvergenceCheck)
+			{
+				cudaMalloc(&d_convergenceMetrics, sizeof(ConvergenceMetrics));
+			}
+		}
+
+		void CleanupConvergenceDetection()
+		{
+			if (d_convergenceMetrics)
+			{
+				cudaFree(d_convergenceMetrics);
+				d_convergenceMetrics = nullptr;
+			}
+		}
+
+		void UpdateConvergenceMetrics()
+		{
+			if (!Global::simParams.enableConvergenceCheck || !d_convergenceMetrics) return;
+
+			// Compute convergence metrics on GPU
+			ComputeConvergenceMetrics(
+				d_convergenceMetrics,
+				positions, predicted, velocities,
+				stretchIndices, stretchLengths,
+				Global::simParams.numParticles,
+				(uint)stretchLengths.size(),
+				Global::simParams.maxSpeed,
+				Timer::fixedDeltaTime());
+
+			// Copy results back to host
+			ConvergenceMetrics hostMetrics;
+			cudaMemcpy(&hostMetrics, d_convergenceMetrics, sizeof(ConvergenceMetrics), cudaMemcpyDeviceToHost);
+
+			// Calculate averages
+			float avgConstraintViolation = 0.0f;
+			float avgPositionChange = 0.0f;
+			float velocityLimitTriggerRatio = 0.0f;
+
+			if (hostMetrics.totalParticleCount > 0)
+			{
+				if (stretchLengths.size() > 0)
+				{
+					avgConstraintViolation = hostMetrics.totalConstraintViolation / (float)stretchLengths.size();
+				}
+				avgPositionChange = hostMetrics.totalPositionChange / (float)hostMetrics.totalParticleCount;
+				velocityLimitTriggerRatio = (float)hostMetrics.velocityLimitCount / (float)hostMetrics.totalParticleCount;
+			}
+
+			// Update history
+			m_constraintViolationHistory.push_back(avgConstraintViolation);
+			m_positionChangeHistory.push_back(avgPositionChange);
+			m_velocityLimitRatioHistory.push_back(velocityLimitTriggerRatio);
+
+			// Limit history size
+			if (m_constraintViolationHistory.size() > CONVERGENCE_HISTORY_SIZE)
+			{
+				m_constraintViolationHistory.pop_front();
+			}
+			if (m_positionChangeHistory.size() > CONVERGENCE_HISTORY_SIZE)
+			{
+				m_positionChangeHistory.pop_front();
+			}
+			if (m_velocityLimitRatioHistory.size() > CONVERGENCE_HISTORY_SIZE)
+			{
+				m_velocityLimitRatioHistory.pop_front();
+			}
+
+			// Check convergence
+			bool isConverged = CheckConvergence(avgConstraintViolation, avgPositionChange, velocityLimitTriggerRatio);
+
+			// Update convergence frame count
+			if (isConverged)
+			{
+				m_convergenceFrameCount++;
+			}
+			else
+			{
+				m_convergenceFrameCount = 0;
+			}
+
+			// Update global parameters
+			Global::simParams.avgConstraintViolation = avgConstraintViolation;
+			Global::simParams.avgPositionChange = avgPositionChange;
+			Global::simParams.velocityLimitTriggerRatio = velocityLimitTriggerRatio;
+			Global::simParams.isConverged = isConverged;
+			Global::simParams.convergenceFrameCount = m_convergenceFrameCount;
+		}
+
+		bool CheckConvergence(float avgConstraintViolation, float avgPositionChange, float velocityLimitTriggerRatio)
+		{
+			bool constraintConverged = avgConstraintViolation <= Global::simParams.convergenceThreshold;
+			bool positionConverged = avgPositionChange <= Global::simParams.positionChangeThreshold;
+			bool velocityConverged = velocityLimitTriggerRatio <= Global::simParams.velocityLimitRatio;
+			
+			return constraintConverged && positionConverged && velocityConverged;
+		}
 
 		void ShowDebugGUI()
 		{

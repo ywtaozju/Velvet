@@ -59,6 +59,72 @@ void VtSimParams::OnGUI()
 	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Relaxation Factor", &relaxationFactor, 0, 3.0);
 	//IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Bend Compliance", &bendCompliance, 1e-3, 100.0, "%.3f", ImGuiSliderFlags_Logarithmic);
 	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Long Range Stretch", &longRangeStretchiness, 1.0, 2.0, "%.3f");
+	
+	ImGui::Separator();
+	
+	// Convergence Detection Section
+	IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Convergence Check", &enableConvergenceCheck);
+	HelpMarker("Enable convergence detection to monitor simulation stability");
+	
+	if (enableConvergenceCheck)
+	{
+		ImGui::Indent(15);
+		
+		// Threshold Controls
+		ImGui::Text("Convergence Thresholds:");
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Constraint Violation", &convergenceThreshold, 0.001f, 0.1f, "%.4f");
+		HelpMarker("Maximum acceptable constraint violation ratio (0-1)");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Position Change", &positionChangeThreshold, 1e-5f, 1e-2f, "%.6f", ImGuiSliderFlags_Logarithmic);
+		HelpMarker("Maximum acceptable position change magnitude per frame");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Velocity Limit Ratio", &velocityLimitRatio, 0.01f, 0.5f, "%.3f");
+		HelpMarker("Maximum acceptable ratio of particles hitting velocity limit");
+		
+		ImGui::Separator();
+		
+		// Current Metrics Display
+		ImGui::Text("Current Metrics:");
+		
+		// Constraint Violation
+		ImVec4 constraintColor = (avgConstraintViolation <= convergenceThreshold) ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, constraintColor);
+		ImGui::Text("Constraint Violation: %.6f", avgConstraintViolation);
+		ImGui::PopStyleColor();
+		
+		// Position Change
+		ImVec4 positionColor = (avgPositionChange <= positionChangeThreshold) ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, positionColor);
+		ImGui::Text("Position Change: %.6f", avgPositionChange);
+		ImGui::PopStyleColor();
+		
+		// Velocity Limit Ratio
+		ImVec4 velocityColor = (velocityLimitTriggerRatio <= velocityLimitRatio) ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, velocityColor);
+		ImGui::Text("Velocity Limit Ratio: %.3f%%", velocityLimitTriggerRatio * 100.0f);
+		ImGui::PopStyleColor();
+		
+		ImGui::Separator();
+		
+		// Convergence Status
+		ImVec4 statusColor = isConverged ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, statusColor);
+		if (isConverged)
+		{
+			ImGui::Text("Status: CONVERGED (%d frames)", convergenceFrameCount);
+		}
+		else
+		{
+			ImGui::Text("Status: NOT CONVERGED");
+		}
+		ImGui::PopStyleColor();
+		
+		ImGui::Indent(-15);
+	}
 }
 
 struct SolverTiming
