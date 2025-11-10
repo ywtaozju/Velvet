@@ -93,13 +93,87 @@ namespace Velvet
 				}
 				CollideSDF(predicted, sdfColliders, positions, (uint)sdfColliders.size(), substepTime);
 
+				// Iteration stability detection for this substep
+				int stableIterationCount = 0;
+				float totalIterationChange = 0.0f;
+				float maxIterationChange = 0.0f;
+				int actualIterations = 0;
+
+				// Initialize previous positions for iteration stability tracking
+				VtBuffer<glm::vec3> previousIterationPositions;
+				if (Global::simParams.enableIterationStability)
+				{
+					previousIterationPositions.resize(Global::simParams.numParticles);
+					// Copy initial predicted positions as baseline
+					cudaMemcpy(previousIterationPositions.data(), (glm::vec3*)predicted, 
+						Global::simParams.numParticles * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+				}
+
 				for (int iteration = 0; iteration < Global::simParams.numIterations; iteration++)
 				{
+					actualIterations = iteration + 1;
+
 					SolveStretch(predicted, deltas, deltaCounts, stretchIndices, stretchLengths, invMasses, (uint)stretchLengths.size());
 					SolveAttachment(predicted, deltas, deltaCounts, invMasses,
 						attachParticleIDs, attachSlotIDs, attachSlotPositions, attachDistances, (uint)attachParticleIDs.size());
 					//SolveBending(predicted, deltas, deltaCounts, bendIndices, bendAngles, invMasses, (uint)bendAngles.size(), substepTime);
 					ApplyDeltas(predicted, deltas, deltaCounts);
+
+					// Check iteration stability if enabled
+					if (Global::simParams.enableIterationStability)
+					{
+						float avgChange, maxChange;
+						ComputeIterationStabilityMetrics(
+							&avgChange, &maxChange,
+							previousIterationPositions.data(),
+							(glm::vec3*)predicted,
+							Global::simParams.numParticles
+						);
+
+						totalIterationChange += avgChange;
+						maxIterationChange = max(maxIterationChange, maxChange);
+
+						// Update previous positions for next iteration
+						cudaMemcpy(previousIterationPositions.data(), (glm::vec3*)predicted, 
+							Global::simParams.numParticles * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+
+						// Check if this iteration is stable
+						if (avgChange <= Global::simParams.iterationChangeThreshold)
+						{
+							stableIterationCount++;
+						}
+						else
+						{
+							stableIterationCount = 0; // Reset counter on unstable iteration
+						}
+
+						// Early exit if we've achieved required stable iterations and early exit is enabled
+						if (Global::simParams.enableEarlyExit && 
+							stableIterationCount >= Global::simParams.requiredStableIterations)
+						{
+							break; // Early convergence, exit iteration loop
+						}
+					}
+				}
+
+				// Update iteration stability metrics for this substep
+				if (Global::simParams.enableIterationStability)
+				{
+					Global::simParams.avgIterationChange = (actualIterations > 0) ? 
+						totalIterationChange / actualIterations : 0.0f;
+					Global::simParams.maxIterationChange = maxIterationChange;
+					Global::simParams.stableIterationCount = stableIterationCount;
+					Global::simParams.isIterationStable = (stableIterationCount >= Global::simParams.requiredStableIterations);
+					Global::simParams.actualIterationsUsed = actualIterations;
+				}
+				else
+				{
+					// Set default values when iteration stability is disabled
+					Global::simParams.avgIterationChange = 0.0f;
+					Global::simParams.maxIterationChange = 0.0f;
+					Global::simParams.stableIterationCount = 0;
+					Global::simParams.isIterationStable = false;
+					Global::simParams.actualIterationsUsed = actualIterations;
 				}
 
 				Finalize(velocities, positions, predicted, substepTime);
@@ -122,7 +196,6 @@ namespace Velvet
 			positions.sync();
 			normals.sync();
 		}
-	public:
 
 		int AddCloth(shared_ptr<Mesh> mesh, glm::mat4 modelMatrix, float particleDiameter)
 		{

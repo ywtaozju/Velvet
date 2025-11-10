@@ -9,7 +9,7 @@ using namespace Velvet;
 #define SHORTCUT_BOOL(key, variable) if (Global::input->GetKeyDown(key)) variable = !variable
 
 inline GUI* g_Gui;
-const float k_leftWindowWidth = 250.0f;
+const float k_leftWindowWidth = 380.0f;  // 增加宽度从250到380
 const float k_rightWindowWidth = 330.0f;
 
 void HelpMarker(const char* desc)
@@ -192,6 +192,71 @@ void VtSimParams::OnGUI()
 			ImGui::Text("Status: NOT CONVERGED");
 		}
 		ImGui::PopStyleColor();
+		
+		ImGui::Indent(-15);
+	}
+
+	ImGui::Separator();
+	
+	// Iteration Stability Detection Section
+	IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Iteration Stability", &enableIterationStability);
+	HelpMarker("Monitor position changes between solver iterations to detect instability");
+	
+	if (enableIterationStability)
+	{
+		ImGui::Indent(15);
+		
+		// Iteration Stability Controls
+		ImGui::Text("Iteration Stability Settings:");
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Change Threshold", &iterationChangeThreshold, 1e-6f, 1e-2f, "%.6f", ImGuiSliderFlags_Logarithmic);
+		HelpMarker("Maximum allowed position change between consecutive iterations");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderInt, "Required Stable Iterations", &requiredStableIterations, 1, 10);
+		HelpMarker("Number of consecutive stable iterations required for stability");
+		
+		IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Early Exit", &enableEarlyExit);
+		HelpMarker("Exit iteration loop early when stability is achieved to improve performance");
+		
+		ImGui::Separator();
+		
+		// Iteration Stability Metrics Display
+		ImGui::Text("Iteration Stability Metrics:");
+		
+		// Average iteration change
+		ImVec4 iterChangeColor = (avgIterationChange <= iterationChangeThreshold) ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, iterChangeColor);
+		ImGui::Text("Avg Iteration Change: %.6f", avgIterationChange);
+		ImGui::PopStyleColor();
+		
+		// Maximum iteration change
+		ImVec4 maxChangeColor = (maxIterationChange <= iterationChangeThreshold) ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.6f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, maxChangeColor);
+		ImGui::Text("Max Iteration Change: %.6f", maxIterationChange);
+		ImGui::PopStyleColor();
+		
+		// Stability status
+		ImVec4 stabilityColor = isIterationStable ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, stabilityColor);
+		if (isIterationStable)
+		{
+			ImGui::Text("Iteration Status: STABLE (%d/%d)", stableIterationCount, requiredStableIterations);
+		}
+		else
+		{
+			ImGui::Text("Iteration Status: UNSTABLE");
+		}
+		ImGui::PopStyleColor();
+		
+		// Performance info
+		ImGui::Text("Iterations Used: %d/%d", actualIterationsUsed, numIterations);
+		if (enableEarlyExit && actualIterationsUsed < numIterations)
+		{
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "(Early Exit)");
+		}
 		
 		ImGui::Indent(-15);
 	}

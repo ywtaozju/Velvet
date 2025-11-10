@@ -62,12 +62,25 @@ struct VtSimParams
 	float positionChangeThreshold	HOST_INIT(1e-3f);				//!< Position change magnitude threshold (world space units)
 	float velocityLimitRatio		HOST_INIT(0.1f);				//!< Velocity limit trigger ratio threshold (0-1, percentage of particles hitting velocity limit)
 	
+	// Iteration Stability Detection Parameters
+	bool enableIterationStability	HOST_INIT(false);				//!< Enable iteration-to-iteration position change detection
+	float iterationChangeThreshold	HOST_INIT(1e-4f);				//!< Maximum allowed position change between iterations (world space units)
+	int requiredStableIterations	HOST_INIT(3);					//!< Number of consecutive stable iterations required for stability
+	bool enableEarlyExit			HOST_INIT(true);				//!< Enable early exit when stability is achieved
+	
 	// Convergence Detection Runtime Metrics (Read-only, updated by solver)
 	float avgConstraintViolation	HOST_INIT(0.0f);				//!< Current average constraint violation
 	float avgPositionChange			HOST_INIT(0.0f);				//!< Current average position change magnitude  
 	float velocityLimitTriggerRatio	HOST_INIT(0.0f);				//!< Current velocity limit trigger ratio
 	bool isConverged				HOST_INIT(false);				//!< Current convergence state
 	int convergenceFrameCount		HOST_INIT(0);					//!< Consecutive converged frame count
+	
+	// Iteration Stability Runtime Metrics (Read-only, updated by solver)
+	float avgIterationChange		HOST_INIT(0.0f);				//!< Average position change between iterations
+	float maxIterationChange		HOST_INIT(0.0f);				//!< Maximum position change between iterations
+	bool isIterationStable			HOST_INIT(false);				//!< Current iteration stability state
+	int stableIterationCount		HOST_INIT(0);					//!< Count of consecutive stable iterations in current substep
+	int actualIterationsUsed		HOST_INIT(0);					//!< Actual iterations used (may be less than max due to early exit)
 
 	void OnGUI();  // Declaration moved to separate cpp file for implementation
 };

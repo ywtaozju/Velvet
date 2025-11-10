@@ -188,4 +188,13 @@ namespace Velvet
 		const uint numConstraints,
 		const float maxSpeed,
 		const float deltaTime);
+
+	// Iteration Stability Detection Functions
+	void ComputeIterationStabilityMetrics(
+		float* avgChange,
+		float* maxChange,
+		const glm::vec3* previousPositions,
+		const glm::vec3* currentPositions,
+		uint numParticles);
+
 }

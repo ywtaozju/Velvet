@@ -617,4 +617,58 @@ namespace Velvet
 		}
 	}
 
+	// Iteration Stability Detection Implementation - Simple Version
+	__global__ void ComputeIterationChange_Kernel(
+		float* positionChanges,
+		CONST(glm::vec3*) previousPositions,
+		CONST(glm::vec3*) currentPositions,
+		const uint numParticles)
+	{
+		GET_CUDA_ID(id, numParticles);
+		
+		// Compute position change magnitude between iterations
+		glm::vec3 posChange = currentPositions[id] - previousPositions[id];
+		positionChanges[id] = glm::length(posChange);
+	}
+
+	void ComputeIterationStabilityMetrics(
+		float* avgChange,
+		float* maxChange,
+		const glm::vec3* previousPositions,
+		const glm::vec3* currentPositions,
+		uint numParticles)
+	{
+		if (numParticles == 0) 
+		{
+			*avgChange = 0.0f;
+			*maxChange = 0.0f;
+			return;
+		}
+		
+		// Allocate temporary device array for position changes
+		float* d_positionChanges = nullptr;
+		cudaMalloc(&d_positionChanges, numParticles * sizeof(float));
+		
+		// Launch kernel to compute position changes
+		CUDA_CALL(ComputeIterationChange_Kernel, numParticles)(
+			d_positionChanges, previousPositions, currentPositions, numParticles);
+		
+		// Synchronize before reduction
+		cudaDeviceSynchronize();
+		
+		// Use Thrust to compute statistics
+		thrust::device_ptr<float> thrust_positionChanges(d_positionChanges);
+		
+		// Compute average
+		float totalChange = thrust::reduce(thrust_positionChanges, 
+			thrust_positionChanges + numParticles, 0.0f, thrust::plus<float>());
+		*avgChange = totalChange / numParticles;
+		
+		// Compute maximum
+		*maxChange = *thrust::max_element(thrust_positionChanges, thrust_positionChanges + numParticles);
+		
+		// Cleanup
+		cudaFree(d_positionChanges);
+	}
+
 }
