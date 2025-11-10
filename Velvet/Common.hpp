@@ -28,6 +28,14 @@ struct VtSimParams
 
 	// forces
 	glm::vec3 gravity				HOST_INIT(glm::vec3(0, -9.8f, 0));	//!< Constant acceleration applied to all particles
+	
+	// Wind system
+	bool enableWind					HOST_INIT(false);					//!< Enable/disable wind effects
+	glm::vec3 windDirection			HOST_INIT(glm::vec3(1, 0, 0));		//!< Wind direction vector (will be normalized)
+	float windStrength				HOST_INIT(5.0f);					//!< Base wind strength
+	float windTurbulence			HOST_INIT(0.3f);					//!< Random turbulence factor (0-1)
+	float windFrequency				HOST_INIT(2.0f);					//!< Turbulence frequency
+	
 	float bendCompliance			HOST_INIT(10.0f);
 	float damping					HOST_INIT(0.25f);					//!< Viscous drag force, applies a force proportional, and opposite to the particle velocity
 	float relaxationFactor			HOST_INIT(1.0f);					//!< Control the convergence rate of the parallel solver, default: 1, values greater than 1 may lead to instability
@@ -60,10 +68,6 @@ struct VtSimParams
 	float velocityLimitTriggerRatio	HOST_INIT(0.0f);				//!< Current velocity limit trigger ratio
 	bool isConverged				HOST_INIT(false);				//!< Current convergence state
 	int convergenceFrameCount		HOST_INIT(0);					//!< Consecutive converged frame count
-
-	// future updates
-	//float wind[3];													//!< Constant acceleration applied to particles that belong to dynamic triangles, drag needs to be > 0 for wind to affect triangles
-	//int relaxationMode;												//!< How the relaxation is applied inside the solver
 
 	void OnGUI();  // Declaration moved to separate cpp file for implementation
 };

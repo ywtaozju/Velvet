@@ -41,6 +41,13 @@ namespace Velvet
 		CUDA_CALL(InitializePositions_Kernel, count)(positions, start, count, modelMatrix);
 	}
 
+	__device__ float windNoise(int particleId, float time, float frequency)
+	{
+		// Simple noise function for wind turbulence
+		float x = (float)particleId * 0.1f + time * frequency;
+		return sinf(x) * cosf(x * 1.7f) * sinf(x * 2.3f);
+	}
+
 	__global__ void PredictPositions_Kernel(
 		glm::vec3* predicted,
 		glm::vec3* velocities,
@@ -48,7 +55,40 @@ namespace Velvet
 		const float deltaTime)
 	{
 		GET_CUDA_ID(id, d_params.numParticles); 
+		
+		// Apply gravity
 		velocities[id] += d_params.gravity * deltaTime;
+		
+		// Apply wind force if enabled
+		if (d_params.enableWind && glm::length(d_params.windDirection) > 0.001f)
+		{
+			// Normalize wind direction
+			glm::vec3 windDir = glm::normalize(d_params.windDirection);
+			
+			// Calculate base wind force
+			glm::vec3 windForce = windDir * d_params.windStrength;
+			
+			// Add turbulence if specified
+			if (d_params.windTurbulence > 0.0f)
+			{
+				float time = deltaTime * 60.0f; // Convert to approximate frame number
+				
+				// Generate different noise for each component
+				float noiseX = windNoise(id * 3, time, d_params.windFrequency);
+				float noiseY = windNoise(id * 3 + 1, time, d_params.windFrequency * 1.3f);
+				float noiseZ = windNoise(id * 3 + 2, time, d_params.windFrequency * 0.7f);
+				
+				glm::vec3 turbulence = glm::vec3(noiseX, noiseY, noiseZ) * d_params.windTurbulence;
+				
+				// Apply turbulence as both direction variation and strength variation
+				windForce += windForce * turbulence;
+				windForce += glm::vec3(turbulence.y, turbulence.z, turbulence.x) * d_params.windStrength * 0.5f;
+			}
+			
+			// Apply wind as acceleration (force per unit mass)
+			velocities[id] += windForce * deltaTime;
+		}
+		
 		predicted[id] = positions[id] + velocities[id] * deltaTime;
 	}
 

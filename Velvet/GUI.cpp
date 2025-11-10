@@ -48,8 +48,78 @@ void VtSimParams::OnGUI()
 	IMGUI_LEFT_LABEL(ImGui::SliderInt, "Num Substeps", &numSubsteps, 1, 20);
 	IMGUI_LEFT_LABEL(ImGui::SliderInt, "Num Iterations", &numIterations, 1, 20);
 	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Max Speed", &maxSpeed, 1e-2f, 100);
+	
 	ImGui::Separator();
-	IMGUI_LEFT_LABEL(ImGui::SliderFloat3, "Gravity", (float*)&gravity, -50, 50);
+	
+	// Forces Section
+	ImGui::Text("Forces:");
+	IMGUI_LEFT_LABEL(ImGui::DragFloat3, "Gravity", (float*)&gravity, 0.1f, -50, 50);
+	
+	// Wind Controls
+	IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Wind", &enableWind);
+	HelpMarker("Enable wind forces affecting the cloth");
+	
+	if (enableWind)
+	{
+		ImGui::Indent(15);
+		
+		IMGUI_LEFT_LABEL(ImGui::DragFloat3, "Wind Direction", (float*)&windDirection, 0.1f, -10, 10);
+		HelpMarker("Wind direction vector (will be normalized automatically)");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Wind Strength", &windStrength, 0.0f, 20.0f, "%.1f");
+		HelpMarker("Base wind strength multiplier");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Turbulence", &windTurbulence, 0.0f, 1.0f, "%.2f");
+		HelpMarker("Random wind variation (0 = steady, 1 = very turbulent)");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Frequency", &windFrequency, 0.1f, 10.0f, "%.1f");
+		HelpMarker("Speed of wind turbulence changes");
+		
+		// Wind Presets
+		ImGui::Text("Presets:");
+		if (ImGui::Button("Gentle Breeze"))
+		{
+			windDirection = glm::vec3(1, 0, 0);
+			windStrength = 3.0f;
+			windTurbulence = 0.2f;
+			windFrequency = 1.0f;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Strong Wind"))
+		{
+			windDirection = glm::vec3(1, 0.2f, 0);
+			windStrength = 8.0f;
+			windTurbulence = 0.4f;
+			windFrequency = 3.0f;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Hurricane"))
+		{
+			windDirection = glm::vec3(1, -0.3f, 0.5f);
+			windStrength = 15.0f;
+			windTurbulence = 0.8f;
+			windFrequency = 6.0f;
+		}
+		
+		if (ImGui::Button("Updraft"))
+		{
+			windDirection = glm::vec3(0.2f, 1, 0);
+			windStrength = 6.0f;
+			windTurbulence = 0.3f;
+			windFrequency = 2.0f;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Swirling"))
+		{
+			windDirection = glm::vec3(0.7f, 0, 0.7f);
+			windStrength = 10.0f;
+			windTurbulence = 0.6f;
+			windFrequency = 4.0f;
+		}
+		
+		ImGui::Indent(-15);
+	}
+	
 	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Damping", &damping, 0, 10.0f);
 	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Friction", &friction, 0, 1);
 	IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Collision Margin", &collisionMargin, 0, 0.5);
