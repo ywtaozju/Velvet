@@ -122,6 +122,7 @@ namespace Velvet
 		CONST(int*) stretchIndices,
 		CONST(float*) stretchLengths,
 		CONST(float*) invMasses,
+		CONST(float*) distancesToFixedPoints,
 		const uint numConstraints);
 	
 	// Bending doesn't work well with Jacobi. Small compliance lead to shaking, large compliance makes no effect.
@@ -196,5 +197,16 @@ namespace Velvet
 		const glm::vec3* previousPositions,
 		const glm::vec3* currentPositions,
 		uint numParticles);
+
+	// Distance-based Weight System Functions
+	void ComputeDistancesToFixedPoints(
+		float* distancesToFixedPoints,
+		CONST(glm::vec3*) positions,
+		CONST(int*) attachParticleIDs,
+		CONST(glm::vec3*) attachSlotPositions,
+		CONST(int*) attachSlotIDs,
+		const uint numParticles,
+		const uint numAttachments,
+		const float maxDistance);
 
 }

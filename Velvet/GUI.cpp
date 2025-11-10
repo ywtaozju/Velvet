@@ -132,6 +132,30 @@ void VtSimParams::OnGUI()
 	
 	ImGui::Separator();
 	
+	// Distance-based Weight System
+	IMGUI_LEFT_LABEL(ImGui::Checkbox, "Use Distance Weights", &useDistanceBasedWeights);
+	HelpMarker("Use distance to fixed points for weight calculation instead of mass-based weights");
+	
+	if (useDistanceBasedWeights)
+	{
+		ImGui::Indent(15);
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Weight Falloff", &distanceWeightFalloff, 0.5f, 5.0f, "%.1f");
+		HelpMarker("Falloff exponent for distance-based weights (higher = more influence for closer points)");
+		
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Max Distance", &maxDistanceInfluence, 1.0f, 50.0f, "%.1f");
+		HelpMarker("Maximum distance considered for weight calculation (world units)");
+		
+		ImGui::Text("How it works:");
+		ImGui::TextWrapped("- Vertices closer to fixed points move less");
+		ImGui::TextWrapped("- Vertices farther from fixed points move more");
+		ImGui::TextWrapped("- Higher falloff = stronger distance influence");
+		
+		ImGui::Indent(-15);
+	}
+	
+	ImGui::Separator();
+	
 	// Convergence Detection Section
 	IMGUI_LEFT_LABEL(ImGui::Checkbox, "Enable Convergence Check", &enableConvergenceCheck);
 	HelpMarker("Enable convergence detection to monitor simulation stability");

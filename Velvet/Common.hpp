@@ -56,6 +56,11 @@ struct VtSimParams
 	float particleDiameterScalar	HOST_INIT(1.5f);					//!< multiply original stretch length by this scalar to obtain particle diameter
 	float hashCellSizeScalar		HOST_INIT(1.5f);					//!< multiply particle diameter by this scalar to obtain hash cell size
 
+	// Distance-based weight system
+	bool useDistanceBasedWeights	HOST_INIT(false);				//!< Use distance to fixed points for weight calculation instead of mass
+	float distanceWeightFalloff		HOST_INIT(2.0f);				//!< Falloff exponent for distance-based weights (higher = more influence for closer points)
+	float maxDistanceInfluence		HOST_INIT(10.0f);				//!< Maximum distance considered for weight calculation (world units)
+
 	// Convergence Detection Parameters
 	bool enableConvergenceCheck		HOST_INIT(false);				//!< Enable convergence detection
 	float convergenceThreshold		HOST_INIT(0.01f);				//!< Constraint violation threshold (0-1, percentage)
@@ -64,7 +69,7 @@ struct VtSimParams
 	
 	// Iteration Stability Detection Parameters
 	bool enableIterationStability	HOST_INIT(false);				//!< Enable iteration-to-iteration position change detection
-	float iterationChangeThreshold	HOST_INIT(1e-4f);				//!< Maximum allowed position change between iterations (world space units)
+	float iterationChangeThreshold	HOST_INIT(1e-3f);				//!< Maximum allowed position change between iterations (world space units)
 	int requiredStableIterations	HOST_INIT(3);					//!< Number of consecutive stable iterations required for stability
 	bool enableEarlyExit			HOST_INIT(true);				//!< Enable early exit when stability is achieved
 	

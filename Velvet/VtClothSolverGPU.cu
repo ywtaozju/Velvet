@@ -102,6 +102,101 @@ namespace Velvet
 		CUDA_CALL(PredictPositions_Kernel, h_params.numParticles)(predicted, velocities, positions, deltaTime);
 	}
 
+	// Distance-based weight calculation implementation
+	__global__ void ComputeDistancesToFixedPoints_Kernel(
+		float* distancesToFixedPoints,
+		CONST(glm::vec3*) positions,
+		CONST(int*) attachParticleIDs,
+		CONST(glm::vec3*) attachSlotPositions,
+		CONST(int*) attachSlotIDs,
+		const uint numParticles,
+		const uint numAttachments,
+		const float maxDistance)
+	{
+		GET_CUDA_ID(id, numParticles);
+		
+		float minDistance = maxDistance; // Start with max distance
+		glm::vec3 particlePos = positions[id];
+		
+		// Track which slots we've already processed to avoid duplicates
+		int processedSlots[16]; // Support up to 16 unique fixed points
+		int numProcessedSlots = 0;
+		
+		// Find minimum distance to any unique fixed point position
+		for (int i = 0; i < numAttachments; i++)
+		{
+			int slotID = attachSlotIDs[i];
+			
+			// Check if we've already processed this slot
+			bool alreadyProcessed = false;
+			for (int j = 0; j < numProcessedSlots; j++)
+			{
+				if (processedSlots[j] == slotID)
+				{
+					alreadyProcessed = true;
+					break;
+				}
+			}
+			
+			if (alreadyProcessed) continue;
+			
+			// Add this slot to processed list
+			if (numProcessedSlots < 16)
+			{
+				processedSlots[numProcessedSlots++] = slotID;
+			}
+			
+			// Get the fixed point position from slot positions
+			glm::vec3 fixedPos = attachSlotPositions[slotID];
+			
+			// Calculate distance to this fixed point
+			float distance = glm::length(particlePos - fixedPos);
+			minDistance = min(minDistance, distance);
+			
+			// Check if this particle is very close to the fixed point (essentially fixed)
+			if (distance < 0.001f) // Very small threshold for "fixed" particles
+			{
+				minDistance = 0.0f;
+				break; // This particle is essentially at a fixed point
+			}
+		}
+		
+		// Store the minimum distance, clamped to maxDistance
+		distancesToFixedPoints[id] = min(minDistance, maxDistance);
+	}
+
+	void ComputeDistancesToFixedPoints(
+		float* distancesToFixedPoints,
+		CONST(glm::vec3*) positions,
+		CONST(int*) attachParticleIDs,
+		CONST(glm::vec3*) attachSlotPositions,
+		CONST(int*) attachSlotIDs,
+		const uint numParticles,
+		const uint numAttachments,
+		const float maxDistance)
+	{
+		if (numAttachments == 0) return; // No fixed points, keep default distances
+		
+		ScopedTimerGPU timer("Solver_ComputeDistances");
+		CUDA_CALL(ComputeDistancesToFixedPoints_Kernel, numParticles)(
+			distancesToFixedPoints, positions, attachParticleIDs, attachSlotPositions, attachSlotIDs, 
+			numParticles, numAttachments, maxDistance);
+	}
+
+	__device__ float ComputeDistanceWeight(float distanceToFixed, float maxDistance, float falloff)
+	{
+		// Convert distance to weight - closer to fixed point = higher weight (less movement)
+		// Normalize distance to [0,1] range
+		float normalizedDistance = min(distanceToFixed / maxDistance, 1.0f);
+		
+		// Invert the distance so closer points get higher weights
+		// Apply falloff - higher falloff means more sharp transition
+		float weight = powf(1.0f - normalizedDistance, falloff);
+		
+		// Ensure minimum weight to avoid overly rigid behavior, but allow higher maximum
+		return max(weight, 0.01f);
+	}
+
 	__global__ void SolveStretch_Kernel(
 		glm::vec3* predicted,
 		glm::vec3* deltas,
@@ -109,6 +204,7 @@ namespace Velvet
 		CONST(int*) stretchIndices,
 		CONST(float*) stretchLengths,
 		CONST(float*) invMasses,
+		CONST(float*) distancesToFixedPoints,
 		const uint numConstraints)
 	{
 		GET_CUDA_ID(id, numConstraints);
@@ -119,9 +215,26 @@ namespace Velvet
 
 		glm::vec3 diff = predicted[idx1] - predicted[idx2];
 		float distance = glm::length(diff);
-		float w1 = invMasses[idx1];
-		float w2 = invMasses[idx2];
-		float denom = w1 + w2;
+		
+		float w1, w2, denom;
+		
+		if (d_params.useDistanceBasedWeights)
+		{
+			// Use distance-based weights
+			float dist1 = distancesToFixedPoints[idx1];
+			float dist2 = distancesToFixedPoints[idx2];
+			
+			w1 = ComputeDistanceWeight(dist1, d_params.maxDistanceInfluence, d_params.distanceWeightFalloff);
+			w2 = ComputeDistanceWeight(dist2, d_params.maxDistanceInfluence, d_params.distanceWeightFalloff);
+		}
+		else
+		{
+			// Use traditional mass-based weights  
+			w1 = invMasses[idx1];
+			w2 = invMasses[idx2];
+		}
+		
+		denom = w1 + w2;
 
 		if (distance != expectedDistance && denom > 0)
 		{
@@ -137,8 +250,6 @@ namespace Velvet
 			AtomicAdd(deltas, idx2, correction2, reorder);
 			atomicAdd(&deltaCounts[idx1], 1);
 			atomicAdd(&deltaCounts[idx2], 1);
-			//printf("correction[%d] = (%.2f,%.2f,%.2f)\n", idx1, correction1.x, correction1.y, correction1.z);
-			//printf("correction[%d] = (%.2f,%.2f,%.2f)\n", idx2, correction2.x, correction2.y, correction2.z);
 		}
 	}
 
@@ -149,10 +260,11 @@ namespace Velvet
 		CONST(int*) stretchIndices, 
 		CONST(float*) stretchLengths,
 		CONST(float*) invMasses,
+		CONST(float*) distancesToFixedPoints,
 		const uint numConstraints)
 	{
 		ScopedTimerGPU timer("Solver_SolveStretch");
-		CUDA_CALL(SolveStretch_Kernel, numConstraints)(predicted, deltas, deltaCounts, stretchIndices, stretchLengths, invMasses, numConstraints);
+		CUDA_CALL(SolveStretch_Kernel, numConstraints)(predicted, deltas, deltaCounts, stretchIndices, stretchLengths, invMasses, distancesToFixedPoints, numConstraints);
 	}
 
 	__global__ void SolveBending_Kernel(

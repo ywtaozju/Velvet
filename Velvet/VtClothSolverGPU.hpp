@@ -33,7 +33,7 @@ namespace Velvet
 			
 			// Initialize convergence detection - always initialize, even if disabled
 			InitializeConvergenceDetection();
-			//ShowDebugGUI();
+			ShowDebugGUI(); // Enable debug GUI to inspect distance-based weights
 		}
 
 		void Update() override
@@ -74,6 +74,36 @@ namespace Velvet
 			//==========================
 			SetSimulationParams(&Global::simParams);
 
+			 // Compute distances to fixed points if using distance-based weights
+			if (Global::simParams.useDistanceBasedWeights && attachParticleIDs.size() > 0)
+			{
+				static int debugCounter = 0;
+				if (++debugCounter % 60 == 0) // Print debug info every 60 frames
+				{
+					printf("Debug: Computing distances to fixed points. Attachments: %d, Particles: %d\n", 
+						(int)attachParticleIDs.size(), Global::simParams.numParticles);
+				}
+				
+				ComputeDistancesToFixedPoints(
+					distancesToFixedPoints.data(),
+					(glm::vec3*)positions,
+					attachParticleIDs.data(),
+					attachSlotPositions.data(),
+					attachSlotIDs.data(),
+					Global::simParams.numParticles,
+					(uint)attachParticleIDs.size(),
+					Global::simParams.maxDistanceInfluence);
+			}
+			else
+			{
+				static int debugCounter = 0;
+				if (++debugCounter % 120 == 0) // Print debug info every 120 frames
+				{
+					printf("Debug: Distance-based weights NOT computed. UseWeights: %s, Attachments: %d\n", 
+						Global::simParams.useDistanceBasedWeights ? "true" : "false", (int)attachParticleIDs.size());
+				}
+			}
+
 			// External colliders can move relatively fast, and cloth will have large velocity after colliding with them.
 			// This can produce unstable behavior, such as vertex flashing between two sides.
 			// We include a pre-stabilization step to mitigate this issue. Collision here will not influence velocity.
@@ -113,7 +143,7 @@ namespace Velvet
 				{
 					actualIterations = iteration + 1;
 
-					SolveStretch(predicted, deltas, deltaCounts, stretchIndices, stretchLengths, invMasses, (uint)stretchLengths.size());
+					SolveStretch(predicted, deltas, deltaCounts, stretchIndices, stretchLengths, invMasses, distancesToFixedPoints, (uint)stretchLengths.size());
 					SolveAttachment(predicted, deltas, deltaCounts, invMasses,
 						attachParticleIDs, attachSlotIDs, attachSlotPositions, attachDistances, (uint)attachParticleIDs.size());
 					//SolveBending(predicted, deltas, deltaCounts, bendIndices, bendAngles, invMasses, (uint)bendAngles.size(), substepTime);
@@ -225,6 +255,9 @@ namespace Velvet
 			deltaCounts.push_back(newParticles, 0);
 			invMasses.push_back(newParticles, 1.0f);
 
+			// Initialize distance-based weight buffers with default values
+			distancesToFixedPoints.push_back(newParticles, Global::simParams.maxDistanceInfluence);
+
 			// Initialize buffer datas
 			InitializePositions(positions, prevNumParticles, newParticles, modelMatrix);
 			cudaDeviceSynchronize();
@@ -301,6 +334,9 @@ namespace Velvet
 		VtBuffer<glm::vec3> deltas;
 		VtBuffer<int> deltaCounts;
 		VtBuffer<float> invMasses;
+
+		// Distance-based weight system buffers
+		VtBuffer<float> distancesToFixedPoints;		// Distance from each vertex to nearest fixed point
 
 		VtBuffer<int> stretchIndices;
 		VtBuffer<float> stretchLengths;
@@ -479,6 +515,19 @@ namespace Velvet
 					auto norm = normals[particleIndex1];
 					ImGui::Text(fmt::format("Normal: [{:.3f},{:.3f},{:.3f}]", norm.x, norm.y, norm.z).c_str());
 
+					// Add distance-based weight debugging
+					if (Global::simParams.useDistanceBasedWeights && distancesToFixedPoints.size() > particleIndex1)
+					{
+						ImGui::Text(fmt::format("Distance to Fixed Points: {:.3f}", distancesToFixedPoints[particleIndex1]).c_str());
+						float weight = ComputeDistanceWeightHost(distancesToFixedPoints[particleIndex1], 
+							Global::simParams.maxDistanceInfluence, Global::simParams.distanceWeightFalloff);
+						ImGui::Text(fmt::format("Computed Weight: {:.3f}", weight).c_str());
+					}
+					else
+					{
+						ImGui::Text("Distance-based weights: DISABLED or no data");
+					}
+
 					static int neighborRange1 = 0;
 					IMGUI_LEFT_LABEL(ImGui::SliderInt, "NeighborRange1", &neighborRange1, 0, 63);
 					ImGui::Text(fmt::format("NeighborID: {}", m_spatialHash->neighbors[neighborRange1 + particleIndex1 * Global::simParams.maxNumNeighbors]).c_str());
@@ -500,6 +549,52 @@ namespace Velvet
 					ImGui::Text(fmt::format("NeighborID: {}", m_spatialHash->neighbors[neighborRange2 + particleIndex2 * Global::simParams.maxNumNeighbors]).c_str());
 					ImGui::Indent(-10);
 				}
+
+				// Distance-based weight system debugging section
+				if (ImGui::CollapsingHeader("Distance-Based Weights Debug"))
+				{
+					ImGui::Text("System Status: %s", Global::simParams.useDistanceBasedWeights ? "ENABLED" : "DISABLED");
+					ImGui::Text("Max Distance Influence: %.2f", Global::simParams.maxDistanceInfluence);
+					ImGui::Text("Distance Weight Falloff: %.2f", Global::simParams.distanceWeightFalloff);
+					ImGui::Text("Attachment Points Count: %d", (int)attachParticleIDs.size());
+					ImGui::Text("Distance Buffer Size: %d", (int)distancesToFixedPoints.size());
+					
+					if (attachParticleIDs.size() > 0)
+					{
+						ImGui::Text("Attached Particle IDs:");
+						ImGui::Indent(15);
+						for (int i = 0; i < min(10, (int)attachParticleIDs.size()); i++)
+						{
+							int slotIndex = attachSlotIDs[i];
+							glm::vec3 slotPos = attachSlotPositions[slotIndex];
+							ImGui::Text("  [%d] -> Particle %d, Slot %d, Pos(%.2f,%.2f,%.2f)", 
+								i, attachParticleIDs[i], slotIndex, slotPos.x, slotPos.y, slotPos.z);
+						}
+						if (attachParticleIDs.size() > 10)
+						{
+							ImGui::Text("  ... and %d more", (int)attachParticleIDs.size() - 10);
+						}
+						ImGui::Indent(-15);
+					}
+
+					// Show some sample distance values
+					if (distancesToFixedPoints.size() > 0 && Global::simParams.useDistanceBasedWeights)
+					{
+						ImGui::Text("Sample Distance Values:");
+						ImGui::Indent(15);
+						int sampleCount = min(10, (int)distancesToFixedPoints.size());
+						for (int i = 0; i < sampleCount; i++)
+						{
+							int idx = i * (int)distancesToFixedPoints.size() / sampleCount;
+							float distance = distancesToFixedPoints[idx];
+							float weight = ComputeDistanceWeightHost(distance, 
+								Global::simParams.maxDistanceInfluence, Global::simParams.distanceWeightFalloff);
+							ImGui::Text("  Particle %d: Dist=%.3f, Weight=%.3f", idx, distance, weight);
+						}
+						ImGui::Indent(-15);
+					}
+				}
+
 				static int cellID = 0;
 				IMGUI_LEFT_LABEL(ImGui::SliderInt, "CellID", &cellID, 0, (int)m_spatialHash->cellStart.size() - 1);
 				int start = m_spatialHash->cellStart[cellID];
@@ -519,5 +614,20 @@ namespace Velvet
 				});
 		}
 
+	private:
+		// Host-side weight calculation for debugging
+		float ComputeDistanceWeightHost(float distanceToFixed, float maxDistance, float falloff) const
+		{
+			// Convert distance to weight - closer to fixed point = higher weight (less movement)
+			// Normalize distance to [0,1] range
+			float normalizedDistance = min(distanceToFixed / maxDistance, 1.0f);
+			
+			// Invert the distance so closer points get higher weights
+			// Apply falloff - higher falloff means more sharp transition
+			float weight = powf(1.0f - normalizedDistance, falloff);
+			
+			// Ensure minimum weight to avoid overly rigid behavior, but allow higher maximum
+			return max(weight, 0.01f);
+		}
 	};
 }
