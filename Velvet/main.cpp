@@ -380,6 +380,185 @@ public:
 	}
 };
 
+class SceneFlag : public Scene
+{
+public:
+	SceneFlag() { name = "Cloth / Flag"; }
+
+	void PopulateActors(GameInstance* game) override
+	{
+		SpawnCameraAndLight(game);
+		SpawnInfinitePlane(game);
+
+		// Adjust simulation parameters for flag behavior
+		ModifyParameter(&Global::simParams.numSubsteps, 5);
+		ModifyParameter(&Global::simParams.numIterations, 8);
+		ModifyParameter(&Global::simParams.damping, 0.1f);
+		ModifyParameter(&Global::simParams.friction, 0.1f);
+		
+		// Enable wind for realistic flag movement
+		ModifyParameter(&Global::simParams.enableWind, true);
+		ModifyParameter(&Global::simParams.windDirection, glm::vec3(1.0f, 0.0f, 0.2f));
+		ModifyParameter(&Global::simParams.windStrength, 5.0f);
+		ModifyParameter(&Global::simParams.windTurbulence, 0.3f);
+		ModifyParameter(&Global::simParams.windFrequency, 2.0f);
+
+		// Create flag pole (cylinder)
+		auto flagPole = SpawnFlagPole(game);
+		float poleRadius = 0.05f;
+		float poleHeight = 4.0f;
+		
+			// Ensure the pole extends from ground (y=0) to top (y=poleHeight)
+		// For a cylinder mesh, the center should be at middle height, 
+		// and the Y scale should make the total height equal poleHeight
+		// If scale.y represents half-height (radius in Y direction), then:
+		// - Position Y = poleHeight / 2 (center at middle)
+		// - Scale Y = poleHeight / 2 (so total height = 2 * scale.y = poleHeight)
+		//
+		// But to be extra sure the pole reaches the ground, let's position it slightly lower
+		float poleBottomY = -3.0f;  // Ground level
+		float poleTopY = poleHeight;  // Top level
+		float poleCenterY = (poleBottomY + poleTopY) / 2.0f;  // = poleHeight / 2
+		float poleScaleY = (poleTopY - poleBottomY) / 2.0f;   // = poleHeight / 2
+		
+		flagPole->Initialize(glm::vec3(0, poleCenterY, 0), 
+			glm::vec3(poleRadius, poleScaleY, poleRadius));
+
+		// Create flag cloth
+		int clothResolution = 16; // Good balance of detail and performance for flag
+		auto flag = SpawnCloth(game, clothResolution, 1); // Use fabric texture 1
+		
+			// Override the flag material to ensure no reflectivity for realistic cloth appearance
+		auto flagRenderer = flag->GetComponent<MeshRenderer>();
+		if (flagRenderer) {
+			MaterialProperty flagMaterialProperty;
+			auto texture = Resource::LoadTexture("fabric1.jpg");
+			flagMaterialProperty.preRendering = [texture](Material* mat) {
+				mat->SetVec3("material.tint", glm::vec3(0.0f, 0.5f, 1.0f));
+				mat->SetBool("material.useTexture", true);
+				mat->SetTexture("material.diffuse", texture);
+				mat->SetFloat("material.specular", 0.0f);
+			};
+			flagRenderer->SetMaterialProperty(flagMaterialProperty);
+		}
+		
+		// Position flag next to the pole, oriented vertically
+		// The flag should be attached to the side of the pole, not at the top
+		float flagWidth = 1.5f;
+		float flagHeight = 1.0f;
+		
+		// Position the flag so its left edge is at the pole, and it hangs down from the upper part of the pole
+		// Flag center should be positioned so the top of the flag is near the top of the pole
+		// But not at the very top - leave some space and make sure flag is below pole top
+		float flagTopOffset = 0.8f; // Increased offset to ensure flag is well below pole top
+		float flagCenterY = poleHeight - flagTopOffset - flagHeight * 0.5f;
+		
+		flag->transform->position = glm::vec3(poleRadius + flagWidth * 0.5f, flagCenterY, 0);
+		flag->transform->scale = glm::vec3(flagWidth * 0.5f, flagHeight * 0.5f, 1.0f);
+		flag->transform->rotation = glm::vec3(0, 0, 0); // No initial rotation
+
+#ifdef SOLVER_CPU
+		auto clothObj = flag->GetComponent<VtClothObjectCPU>();
+#else		
+		auto clothObj = flag->GetComponent<VtClothObjectGPU>();
+#endif	
+		if (clothObj)
+		{
+			// Attach left edge of flag to pole
+			// IMPORTANT: Understanding the vertex storage order in GenerateClothMesh:
+			// Vertices are stored row by row: for (y) { for (x) { vertices.push_back(...) } }
+			// So the actual index is: y * (resolution + 1) + x
+			// But VertexIndexAt function uses: x * (resolution + 1) + y (which is inconsistent!)
+			
+			// For a flag, we want to attach the LEFT COLUMN (x=0) to the pole
+			// Left column vertices are at positions: (x=0, y=0), (x=0, y=1), (x=0, y=2), ...
+			
+			vector<int> attachedIndices;
+			
+			// Based on the actual vertex storage (row-major), left column indices are:
+			for (int y = 0; y <= clothResolution; y++)
+			{
+				// Left column: x=0, y varies from 0 to resolution
+				// Correct index for row-major storage: y * (resolution + 1) + x
+				int vertexIndex = y * (clothResolution + 1) + 0;  // = y * (clothResolution + 1)
+				attachedIndices.push_back(vertexIndex);
+			}
+			
+			clothObj->SetAttachedIndices(attachedIndices);
+			
+			// CRUCIAL: Set the attachment slot positions to match the pole position
+			// After setting attached indices, we need to update the slot positions to be at the pole
+			// The GenerateAttach method will use these positions as fixed points
+			
+			// Calculate pole attachment positions along the left edge of the flag
+			// Flag position and scale affect where the left edge is located
+			glm::vec3 flagPosition = flag->transform->position;
+			glm::vec3 flagScale = flag->transform->scale;
+			
+				// The flag's left edge should be attached to the pole surface
+			float poleX = poleRadius;  // Attach to the surface of the pole, not the center
+			
+			// Move the attachment slot positions to the pole
+			game->animationUpdate.Register([clothObj, poleX, flagPosition, flagScale, clothResolution, poleHeight, flagTopOffset = flagTopOffset]() {
+				auto& slotPositions = clothObj->attachSlotPositions();
+				
+				// Update each attachment slot position to be along the pole
+				for (int y = 0; y <= clothResolution; y++)
+				{
+					// Calculate the Y position along the pole for this attachment point
+					float normalizedY = (float)y / (float)clothResolution; // 0 to 1 (top to bottom)
+					
+					// Map this to the actual flag height range
+					// Flag top is at: poleHeight - flagTopOffset
+					// Flag bottom is at: poleHeight - flagTopOffset - flagHeight
+					float flagTop = poleHeight - flagTopOffset - 1.0f;
+					float flagHeight = flagScale.y * 2.0f; // flagScale is radius, so full height is 2x
+					float worldY = flagTop - normalizedY * flagHeight; // Top to bottom along flag
+					
+					// Set the slot position to be on the pole surface
+					glm::vec3 polePosition = glm::vec3(poleX, worldY, flagPosition.z);
+					
+					// Make sure we don't exceed the array bounds
+					if (y < slotPositions.size())
+					{
+						slotPositions[y] = polePosition;
+					}
+				}
+			});
+		}
+	}
+
+private:
+	shared_ptr<Actor> SpawnFlagPole(GameInstance* game)
+	{
+		auto pole = game->CreateActor("Flag Pole");
+		
+		// Create material for pole (metallic look)
+		auto material = Resource::LoadMaterial("_Default");
+		MaterialProperty materialProperty;
+		materialProperty.preRendering = [](Material* mat) {
+			mat->SetVec3("material.tint", glm::vec3(0.6f, 0.6f, 0.7f)); // Metallic gray color
+			mat->SetBool("material.useTexture", false);
+			mat->SetFloat("material.specular", 0.8f);
+		};
+
+		// Load cylinder mesh for pole
+		auto mesh = Resource::LoadMesh("cylinder.obj");
+		auto renderer = make_shared<MeshRenderer>(mesh, material, true);
+		renderer->SetMaterialProperty(materialProperty);
+		
+		// Add collider for pole (use Cube as approximation for cylinder)
+		auto collider = make_shared<Collider>(ColliderType::Cube);
+		
+		// DISABLE the collider to prevent collision with the flag cloth
+		// The flag is attached through constraints, not collision
+		collider->enabled = false;
+		
+		pole->AddComponents({ renderer, collider });
+		return pole;
+	}
+};
+
 int main()
 {
 	//=====================================
@@ -400,6 +579,7 @@ int main()
 		make_shared<SceneClothMultiple>(),
 		make_shared<SceneClothHD>(),
 		make_shared<SceneClothSwirl>(),
+		make_shared<SceneFlag>(), // Add the new flag scene
 		//make_shared<SceneColoredCubes>(),
 		//make_shared<ScenePremitiveRendering>(),
 	};
