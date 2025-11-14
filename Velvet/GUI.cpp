@@ -515,6 +515,181 @@ struct PerformanceStat
 	}
 };
 
+struct ConstraintViolationPlot
+{
+	static const int PLOT_SIZE = 180;
+	
+	float violationValues[PLOT_SIZE] = {};
+	float positionChangeValues[PLOT_SIZE] = {};
+	float velocityLimitValues[PLOT_SIZE] = {};
+	int plotIndex = 0;
+	
+	float maxViolation = 0.01f;      // Adaptive scale for violation
+	float maxPositionChange = 0.001f; // Adaptive scale for position change
+	float maxVelocityLimit = 1.0f;   // Fixed scale for velocity limit ratio
+	
+	void Update()
+	{
+		if (Global::gameState.pause) return;
+		
+		// Update only when convergence detection is enabled
+		if (!Global::simParams.enableConvergenceCheck) return;
+		
+		// Update every physics frame to get smooth curves
+		if (Timer::PeriodicUpdate("GUI_CONVERGENCE", Timer::fixedDeltaTime()))
+		{
+			// Get current values from simulation parameters
+			float currentViolation = Global::simParams.avgConstraintViolation;
+			float currentPosChange = Global::simParams.avgPositionChange;
+			float currentVelLimit = Global::simParams.velocityLimitTriggerRatio;
+			
+			// Store values in circular buffer
+			violationValues[plotIndex] = currentViolation;
+			positionChangeValues[plotIndex] = currentPosChange;
+			velocityLimitValues[plotIndex] = currentVelLimit;
+			
+			// Update adaptive scales
+			maxViolation = max(maxViolation, currentViolation * 1.2f);
+			maxPositionChange = max(maxPositionChange, currentPosChange * 1.2f);
+			
+			// Advance circular buffer index
+			plotIndex = (plotIndex + 1) % PLOT_SIZE;
+		}
+	}
+	
+	void OnGUI()
+	{
+		if (!Global::simParams.enableConvergenceCheck) return;
+		
+		if (!ImGui::CollapsingHeader("Convergence Metrics")) return;
+		
+		ImGui::PushItemWidth(-FLT_MIN);
+		
+		// Constraint Violation Plot
+		{
+			float currentViolation = Global::simParams.avgConstraintViolation;
+			float threshold = Global::simParams.convergenceThreshold;
+			
+			auto overlay = fmt::format("Constraint Violation: {:.6f} (Threshold: {:.6f})", 
+				currentViolation, threshold);
+			
+			ImVec4 plotColor = (currentViolation <= threshold) ? 
+				ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+			
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, plotColor);
+			ImGui::PlotLines("##ConstraintViolation", violationValues, PLOT_SIZE, plotIndex, 
+				overlay.c_str(), 0, maxViolation, ImVec2(0, 60.0f));
+			ImGui::PopStyleColor();
+			
+			// Draw threshold line
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			ImVec2 plotPos = ImGui::GetItemRectMin();
+			ImVec2 plotSize = ImGui::GetItemRectSize();
+			
+			if (maxViolation > 0)
+			{
+				float thresholdY = plotPos.y + plotSize.y * (1.0f - threshold / maxViolation);
+				if (thresholdY >= plotPos.y && thresholdY <= plotPos.y + plotSize.y)
+				{
+					drawList->AddLine(
+						ImVec2(plotPos.x, thresholdY),
+						ImVec2(plotPos.x + plotSize.x, thresholdY),
+						IM_COL32(255, 255, 0, 128), 1.0f
+					);
+				}
+			}
+		}
+		
+		ImGui::Dummy(ImVec2(0, 5));
+		
+		// Position Change Plot
+		{
+			float currentPosChange = Global::simParams.avgPositionChange;
+			float threshold = Global::simParams.positionChangeThreshold;
+			
+			auto overlay = fmt::format("Position Change: {:.6f} (Threshold: {:.6f})", 
+				currentPosChange, threshold);
+			
+			ImVec4 plotColor = (currentPosChange <= threshold) ? 
+				ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.6f, 0.0f, 1.0f);
+			
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, plotColor);
+			ImGui::PlotLines("##PositionChange", positionChangeValues, PLOT_SIZE, plotIndex, 
+				overlay.c_str(), 0, maxPositionChange, ImVec2(0, 60.0f));
+			ImGui::PopStyleColor();
+			
+			// Draw threshold line
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			ImVec2 plotPos = ImGui::GetItemRectMin();
+			ImVec2 plotSize = ImGui::GetItemRectSize();
+			
+			if (maxPositionChange > 0)
+			{
+				float thresholdY = plotPos.y + plotSize.y * (1.0f - threshold / maxPositionChange);
+				if (thresholdY >= plotPos.y && thresholdY <= plotPos.y + plotSize.y)
+				{
+					drawList->AddLine(
+						ImVec2(plotPos.x, thresholdY),
+						ImVec2(plotPos.x + plotSize.x, thresholdY),
+						IM_COL32(255, 255, 0, 128), 1.0f
+					);
+				}
+			}
+		}
+		
+		ImGui::Dummy(ImVec2(0, 5));
+		
+		// Velocity Limit Ratio Plot
+		{
+			float currentVelLimit = Global::simParams.velocityLimitTriggerRatio;
+			float threshold = Global::simParams.velocityLimitRatio;
+			
+			auto overlay = fmt::format("Velocity Limit Ratio: {:.3f}% (Threshold: {:.3f}%)", 
+				currentVelLimit * 100.0f, threshold * 100.0f);
+			
+			ImVec4 plotColor = (currentVelLimit <= threshold) ? 
+				ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.8f, 0.4f, 1.0f, 1.0f);
+			
+			ImGui::PushStyleColor(ImGuiCol_PlotLines, plotColor);
+			ImGui::PlotLines("##VelocityLimit", velocityLimitValues, PLOT_SIZE, plotIndex, 
+				overlay.c_str(), 0, maxVelocityLimit, ImVec2(0, 60.0f));
+			ImGui::PopStyleColor();
+			
+			// Draw threshold line
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			ImVec2 plotPos = ImGui::GetItemRectMin();
+			ImVec2 plotSize = ImGui::GetItemRectSize();
+			
+			float thresholdY = plotPos.y + plotSize.y * (1.0f - threshold / maxVelocityLimit);
+			if (thresholdY >= plotPos.y && thresholdY <= plotPos.y + plotSize.y)
+			{
+				drawList->AddLine(
+					ImVec2(plotPos.x, thresholdY),
+					ImVec2(plotPos.x + plotSize.x, thresholdY),
+					IM_COL32(255, 255, 0, 128), 1.0f
+				);
+			}
+		}
+		
+		ImGui::PopItemWidth();
+		
+		// Overall convergence status
+		ImGui::Dummy(ImVec2(0, 5));
+		ImVec4 statusColor = Global::simParams.isConverged ? 
+			ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, statusColor);
+		if (Global::simParams.isConverged)
+		{
+			ImGui::Text("Overall Status: CONVERGED (%d frames)", Global::simParams.convergenceFrameCount);
+		}
+		else
+		{
+			ImGui::Text("Overall Status: NOT CONVERGED");
+		}
+		ImGui::PopStyleColor();
+	}
+};
+
 void GUI::RegisterDebug(function<void()> callback)
 {
 	g_Gui->m_showDebugInfo.Register(callback);
@@ -692,6 +867,11 @@ void GUI::ShowStatWindow()
 	static SolverTiming solverTiming;
 	solverTiming.Update();
 	solverTiming.OnGUI();
+
+	// Add Convergence Metrics Plot
+	static ConstraintViolationPlot convergencePlot;
+	convergencePlot.Update();
+	convergencePlot.OnGUI();
 
 	if (!m_showDebugInfo.empty() || !m_showDebugInfoOnce.empty())
 	{
