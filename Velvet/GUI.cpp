@@ -3,6 +3,11 @@
 #include "Scene.hpp"
 #include "VtEngine.hpp"
 #include "Timer.hpp"
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <chrono>
+#include <filesystem>
 
 using namespace Velvet;
 
@@ -11,6 +16,207 @@ using namespace Velvet;
 inline GUI* g_Gui;
 const float k_leftWindowWidth = 380.0f;  // 增加宽度从250到380
 const float k_rightWindowWidth = 330.0f;
+
+// CSV数据记录器类
+class ConvergenceDataRecorder
+{
+private:
+	static const int RECORDING_FRAMES = 300;  // 可调整的记录帧数
+	
+	struct FrameData
+	{
+		float constraintViolation;
+		float positionChange;
+		float velocityLimitRatio;
+	};
+	
+	std::vector<FrameData> recordedData;
+	bool isRecording = false;
+	int currentFrame = 0;
+	std::string sceneName;
+	
+public:
+	void StartRecording(const std::string& currentSceneName)
+	{
+		if (isRecording) return;  // 已在记录中
+		
+		sceneName = currentSceneName;
+		recordedData.clear();
+		recordedData.reserve(RECORDING_FRAMES);
+		currentFrame = 0;
+		isRecording = true;
+		
+		// 创建CSV输出目录
+		CreateOutputDirectory();
+		
+		printf("Info(DataRecorder): Started recording convergence data for scene '%s' (%d frames)\n", 
+			sceneName.c_str(), RECORDING_FRAMES);
+		printf("Info(DataRecorder): Current physics frame at start: %d\n", Timer::physicsFrameCount());
+	}
+	
+	void RecordFrame()
+	{
+		if (!isRecording)
+		{
+			return;
+		}
+		
+		if (!Global::simParams.enableConvergenceCheck)
+		{
+			printf("Debug(DataRecorder): Convergence check disabled, stopping recording\n");
+			FinishRecording();
+			return;
+		}
+		
+		if (currentFrame >= RECORDING_FRAMES)
+		{
+			FinishRecording();
+			return;
+		}
+		
+		// 记录当前帧数据
+		FrameData data;
+		data.constraintViolation = Global::simParams.avgConstraintViolation;
+		data.positionChange = Global::simParams.avgPositionChange;
+		data.velocityLimitRatio = Global::simParams.velocityLimitTriggerRatio;
+		
+		recordedData.push_back(data);
+		currentFrame++;
+		
+		// 添加调试信息：每帧都记录前几帧的进度
+		if (currentFrame <= 10)
+		{
+			printf("Info(DataRecorder): Recorded frame %d/%d (Physics Frame: %d, Data: CV=%.6f, PC=%.6f, VL=%.6f)\n", 
+				currentFrame, RECORDING_FRAMES, Timer::physicsFrameCount(), 
+				data.constraintViolation, data.positionChange, data.velocityLimitRatio);
+		}
+		// 每50帧显示一次进度
+		else if (currentFrame % 50 == 0)
+		{
+			printf("Info(DataRecorder): Recording progress: %d/%d frames (Physics Frame: %d)\n", 
+				currentFrame, RECORDING_FRAMES, Timer::physicsFrameCount());
+		}
+		
+		if (currentFrame >= RECORDING_FRAMES)
+		{
+			FinishRecording();
+		}
+	}
+	
+	void FinishRecording()
+	{
+		if (!isRecording) return;
+		
+		isRecording = false;
+		SaveToCSV();
+		
+		printf("Info(DataRecorder): Finished recording %d frames of convergence data\n", (int)recordedData.size());
+	}
+	
+	bool IsRecording() const { return isRecording; }
+	int GetProgress() const { return currentFrame; }
+	int GetTotalFrames() const { return RECORDING_FRAMES; }
+	
+	// 重置RecordFrame中的静态变量
+	void ResetRecordFrameState()
+	{
+		// 通过调用一个特殊的RecordFrame来重置其内部状态
+		static bool resetRequested = false;
+		resetRequested = true;
+		// 静态变量将在下次RecordFrame调用时被重置
+	}
+	
+private:
+	void CreateOutputDirectory()
+	{
+		try
+		{
+			// 创建ConvergenceData目录
+			if (!std::filesystem::exists("ConvergenceData"))
+			{
+				std::filesystem::create_directory("ConvergenceData");
+				printf("Info(DataRecorder): Created output directory 'ConvergenceData'\n");
+			}
+		}
+		catch (const std::exception& e)
+		{
+			printf("Warning(DataRecorder): Failed to create directory: %s\n", e.what());
+		}
+	}
+	
+	void SaveToCSV()
+	{
+		if (recordedData.empty()) return;
+		
+		// 生成文件名：场景名 + 时间戳
+		std::string timestamp = GetCurrentTimestamp();
+		std::string cleanSceneName = sceneName;
+		
+		// 替换文件名中的非法字符
+		for (char& c : cleanSceneName)
+		{
+			if (c == ' ' || c == '/' || c == '\\' || c == ':' || c == '<' || c == '>' || c == '|' || c == '*' || c == '?')
+			{
+				c = '_';
+			}
+		}
+		
+		std::string filename = "ConvergenceData/" + cleanSceneName + "_" + timestamp + ".csv";
+		
+		std::ofstream file(filename);
+		if (!file.is_open())
+		{
+			printf("Error(DataRecorder): Failed to create CSV file: %s\n", filename.c_str());
+			return;
+		}
+		
+		// 写入CSV头部（包含元数据）
+		file << "# Convergence Data Export\n";
+		file << "# Scene: " << sceneName << "\n";
+		file << "# Total Frames: " << recordedData.size() << "\n";
+		file << "# Export Time: " << GetReadableTimestamp() << "\n";
+		file << "#\n";
+		file << "Frame,Constraint_Violation,Position_Change,Velocity_Limit_Ratio\n";
+		
+		// 写入数据
+		file << std::fixed << std::setprecision(8);
+		for (size_t i = 0; i < recordedData.size(); ++i)
+		{
+			const auto& data = recordedData[i];
+			file << (i + 1) << ","  // 帧编号从1开始
+				 << data.constraintViolation << ","
+				 << data.positionChange << ","
+				 << data.velocityLimitRatio << "\n";
+		}
+		
+		file.close();
+		printf("Info(DataRecorder): Convergence data saved to: %s\n", filename.c_str());
+		printf("Info(DataRecorder): Recorded %zu unique frames with no duplicates\n", recordedData.size());
+	}
+	
+	std::string GetCurrentTimestamp()
+	{
+		auto now = std::chrono::system_clock::now();
+		auto time_t = std::chrono::system_clock::to_time_t(now);
+		
+		std::stringstream ss;
+		ss << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S");
+		return ss.str();
+	}
+	
+	std::string GetReadableTimestamp()
+	{
+		auto now = std::chrono::system_clock::now();
+		auto time_t = std::chrono::system_clock::to_time_t(now);
+		
+		std::stringstream ss;
+		ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+		return ss.str();
+	}
+};
+
+// 全局数据记录器实例
+static ConvergenceDataRecorder g_dataRecorder;
 
 void HelpMarker(const char* desc)
 {
@@ -538,6 +744,10 @@ struct ConstraintViolationPlot
 		// Update every physics frame to get smooth curves
 		if (Timer::PeriodicUpdate("GUI_CONVERGENCE", Timer::fixedDeltaTime()))
 		{
+			// Record frame data for CSV export if recording is active
+			// 在物理时间步更新时记录，确保正确的频率
+			g_dataRecorder.RecordFrame();
+			
 			// Get current values from simulation parameters
 			float currentViolation = Global::simParams.avgConstraintViolation;
 			float currentPosChange = Global::simParams.avgPositionChange;
@@ -669,7 +879,7 @@ struct ConstraintViolationPlot
 					IM_COL32(255, 255, 0, 128), 1.0f
 				);
 			}
-		}
+			}
 		
 		ImGui::PopItemWidth();
 		
@@ -780,7 +990,7 @@ void GUI::CustomizeStyle()
 	style->FrameRounding = 6;
 	style->WindowTitleAlign = ImVec2(0.5, 0.5);
 
-	style->Colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.7f);
+	style->Colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.06f, 7.0f);
 	style->Colors[ImGuiCol_TitleBg] = style->Colors[ImGuiCol_WindowBg];
 	style->Colors[ImGuiCol_TitleBgActive] = style->Colors[ImGuiCol_TitleBg];
 	style->Colors[ImGuiCol_SliderGrab] = ImVec4(0.325f, 0.325f, 0.325f, 1.0f);
@@ -823,10 +1033,50 @@ void GUI::ShowOptionWindow()
 
 	ImGui::PushItemWidth(-FLT_MIN);
 
+	// Reset按钮 - 增加记录功能
 	if (ImGui::Button("Reset (R)", ImVec2(-FLT_MIN, 0)))
 	{
 		Global::engine->Reset();
+		
+		// 开始记录收敛性数据（如果启用了收敛检测）
+		if (Global::simParams.enableConvergenceCheck && Global::engine->scenes.size() > 0)
+		{
+			// 获取当前场景名
+			std::string currentSceneName = "Unknown";
+			if (Global::engine->sceneIndex < Global::engine->scenes.size())
+			{
+				currentSceneName = Global::engine->scenes[Global::engine->sceneIndex]->name;
+			}
+			
+			g_dataRecorder.StartRecording(currentSceneName);
+		}
 	}
+	
+	// 显示记录状态
+	if (g_dataRecorder.IsRecording())
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.0f, 1.0f));
+		ImGui::Text("Recording Data: %d/%d frames", 
+			g_dataRecorder.GetProgress(), g_dataRecorder.GetTotalFrames());
+		
+		// 显示进度条
+		float progress = (float)g_dataRecorder.GetProgress() / (float)g_dataRecorder.GetTotalFrames();
+		ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0));
+		ImGui::PopStyleColor();
+	}
+	else if (Global::simParams.enableConvergenceCheck)
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+		ImGui::Text("Click Reset to start recording");
+		ImGui::PopStyleColor();
+	}
+	else
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+		ImGui::Text("Enable Convergence Check to record");
+		ImGui::PopStyleColor();
+	}
+	
 	ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
 	{
