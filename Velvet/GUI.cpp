@@ -21,7 +21,7 @@ const float k_rightWindowWidth = 330.0f;
 class ConvergenceDataRecorder
 {
 private:
-	static const int RECORDING_FRAMES = 300;  // 可调整的记录帧数
+	static const int RECORDING_FRAMES = 1000;  // 可调整的记录帧数
 	
 	struct FrameData
 	{
