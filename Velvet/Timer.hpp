@@ -22,10 +22,20 @@ namespace Velvet
 
 		Timer()
 		{
+			// 保存之前的物理帧率设置（如果有的话）
+			float preservedFixedDeltaTime = 1.0f / 60.0f; // 默认60FPS
+			if (s_timer != nullptr)
+			{
+				preservedFixedDeltaTime = s_timer->m_fixedDeltaTime;
+			}
+			
 			s_timer = this;
 
 			m_lastUpdateTime = (float)CurrentTime();
 			m_fixedUpdateTimer = (float)CurrentTime();
+			
+			// 恢复之前的物理帧率设置
+			m_fixedDeltaTime = preservedFixedDeltaTime;
 		}
 
 		~Timer()
