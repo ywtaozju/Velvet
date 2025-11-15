@@ -56,6 +56,11 @@ namespace Velvet
 			GenerateStretch(positions);
 			GenerateAttach(positions);
 			GenerateBending(indices);
+			
+			// ?? IMPORTANT: Initialize distance-based weights ONCE after all constraints are set up
+			// This computes distances from each particle to fixed points using initial positions
+			// and caches them for the entire simulation duration - massive performance improvement!
+			m_solver->InitializeDistanceBasedWeights();
 		}
 
 	private:
@@ -134,18 +139,46 @@ namespace Velvet
 
 		void GenerateAttach(const vector<glm::vec3>& positions)
 		{
+			// ?? FIXED: Restore distance constraint system while properly registering fixed points
 			for (int slotIdx = 0; slotIdx < m_attachedIndices.size(); slotIdx++)
 			{
 				int particleID = m_attachedIndices[slotIdx];
 				glm::vec3 slotPos = positions[particleID];
+				
+				// Add the attachment slot position
 				m_solver->AddAttachSlot(slotPos);
+				
+				 // ?? NEW: Register this position as an actual fixed point for distance weights
+				m_solver->RegisterFixedPoint(slotPos);
+				
+				// ? RESTORED: Create distance constraints for ALL particles to this fixed point
+				// This allows the cloth to be influenced by the fixed point through distance constraints
 				for (int i = 0; i < positions.size(); i++)
 				{
 					float restDistance = glm::length(slotPos - positions[i]);
-					m_solver->AddAttach(m_indexOffset + i, slotIdx, restDistance);
+					
+					// Special handling for the fixed particle itself
+					if (i == particleID)
+					{
+						// This is the actual fixed particle - distance should be 0 (completely fixed)
+						m_solver->AddAttach(m_indexOffset + i, slotIdx, 0.0f);
+						printf("Info(ClothObject): Fixed particle %d (global: %d) at slot %d with ZERO distance\n", 
+							particleID, m_indexOffset + particleID, slotIdx);
+					}
+					else
+					{
+						// Other particles have distance constraints to this fixed point
+						m_solver->AddAttach(m_indexOffset + i, slotIdx, restDistance);
+					}
 				}
-				//m_solver->AddAttach(idx, positions[idx], 0);
 			}
+			
+			printf("Info(ClothObject): Created distance constraint system with %d fixed points\n", 
+				(int)m_attachedIndices.size());
+			printf("Info(ClothObject): Each fixed point influences ALL particles through distance constraints\n");
+			printf("Info(ClothObject): Registered %d actual fixed points for distance weight calculation\n", 
+				(int)m_attachedIndices.size());
+			printf("Info(ClothObject): Use 'Long Range Stretch' parameter to control constraint strength\n");
 		}
 	};
 }

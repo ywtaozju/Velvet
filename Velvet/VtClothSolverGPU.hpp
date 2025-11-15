@@ -74,35 +74,9 @@ namespace Velvet
 			//==========================
 			SetSimulationParams(&Global::simParams);
 
-			 // Compute distances to fixed points if using distance-based weights
-			if (Global::simParams.useDistanceBasedWeights && attachParticleIDs.size() > 0)
-			{
-				static int debugCounter = 0;
-				if (++debugCounter % 60 == 0) // Print debug info every 60 frames
-				{
-					printf("Debug: Computing distances to fixed points. Attachments: %d, Particles: %d\n", 
-						(int)attachParticleIDs.size(), Global::simParams.numParticles);
-				}
-				
-				ComputeDistancesToFixedPoints(
-					distancesToFixedPoints.data(),
-					(glm::vec3*)positions,
-					attachParticleIDs.data(),
-					attachSlotPositions.data(),
-					attachSlotIDs.data(),
-					Global::simParams.numParticles,
-					(uint)attachParticleIDs.size(),
-					Global::simParams.maxDistanceInfluence);
-			}
-			else
-			{
-				static int debugCounter = 0;
-				if (++debugCounter % 120 == 0) // Print debug info every 120 frames
-				{
-					printf("Debug: Distance-based weights NOT computed. UseWeights: %s, Attachments: %d\n", 
-						Global::simParams.useDistanceBasedWeights ? "true" : "false", (int)attachParticleIDs.size());
-				}
-			}
+			// ?? PERFORMANCE OPTIMIZATION: Distance-based weights are now computed ONCE during initialization
+			// and cached, instead of computing every frame. This provides massive performance improvement!
+			// The distances are based on initial positions relative to fixed points and remain constant.
 
 			// External colliders can move relatively fast, and cloth will have large velocity after colliding with them.
 			// This can produce unstable behavior, such as vertex flashing between two sides.
@@ -274,6 +248,37 @@ namespace Velvet
 			return prevNumParticles;
 		}
 
+		// ?? NEW FUNCTION: Initialize distance-based weights ONCE after all attachments are set
+		void InitializeDistanceBasedWeights()
+		{
+			if (!Global::simParams.useDistanceBasedWeights || actualFixedPoints.size() == 0) 
+			{
+				printf("Info(DistanceWeights): Distance-based weights disabled or no fixed points registered\n");
+				return;
+			}
+
+			Timer::StartTimer("INIT_DISTANCE_WEIGHTS");
+			
+			printf("Info(DistanceWeights): Computing distance-based weights ONCE during initialization...\n");
+			printf("Info(DistanceWeights): Particles: %d, Fixed Points: %d\n", 
+				Global::simParams.numParticles, (int)actualFixedPoints.size());
+
+			// Compute distances ONCE using initial positions and actual fixed points
+			ComputeDistancesToActualFixedPoints(
+				distancesToFixedPoints.data(),
+				(glm::vec3*)positions,
+				actualFixedPoints.data(),
+				Global::simParams.numParticles,
+				(uint)actualFixedPoints.size(),
+				Global::simParams.maxDistanceInfluence);
+
+			cudaDeviceSynchronize(); // Ensure computation is complete
+
+			double time = Timer::EndTimer("INIT_DISTANCE_WEIGHTS") * 1000;
+			printf("Info(DistanceWeights): Distance-based weights initialized in %.2f ms\n", time);
+			printf("Info(DistanceWeights): Weights are now CACHED and will NOT be recomputed every frame!\n");
+		}
+
 		void AddStretch(int idx1, int idx2, float distance)
 		{
 			stretchIndices.push_back(idx1);
@@ -301,6 +306,14 @@ namespace Velvet
 			bendIndices.push_back(idx3);
 			bendIndices.push_back(idx4);
 			bendAngles.push_back(angle);
+		}
+
+		// ?? NEW: Register an actual fixed point for distance-based weight calculation
+		void RegisterFixedPoint(glm::vec3 fixedPos)
+		{
+			actualFixedPoints.push_back(fixedPos);
+			printf("Info(ClothSolver): Registered fixed point at (%.2f, %.2f, %.2f)\n", 
+				fixedPos.x, fixedPos.y, fixedPos.z);
 		}
 
 		void UpdateColliders(vector<Collider*>& colliders)
@@ -337,6 +350,7 @@ namespace Velvet
 
 		// Distance-based weight system buffers
 		VtBuffer<float> distancesToFixedPoints;		// Distance from each vertex to nearest fixed point
+		VtBuffer<glm::vec3> actualFixedPoints;		// ?? NEW: Store actual fixed point positions directly
 
 		VtBuffer<int> stretchIndices;
 		VtBuffer<float> stretchLengths;

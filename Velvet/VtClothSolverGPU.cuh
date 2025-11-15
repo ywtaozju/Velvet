@@ -209,4 +209,12 @@ namespace Velvet
 		const uint numAttachments,
 		const float maxDistance);
 
+	// ?? NEW: Simplified version using actual fixed points directly
+	void ComputeDistancesToActualFixedPoints(
+		float* distancesToFixedPoints,
+		CONST(glm::vec3*) positions,
+		CONST(glm::vec3*) actualFixedPoints,
+		const uint numParticles,
+		const uint numFixedPoints,
+		const float maxDistance);
 }

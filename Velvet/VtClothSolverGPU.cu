@@ -102,7 +102,7 @@ namespace Velvet
 		CUDA_CALL(PredictPositions_Kernel, h_params.numParticles)(predicted, velocities, positions, deltaTime);
 	}
 
-	// Distance-based weight calculation implementation
+	// Distance-based weight calculation implementation - FIXED VERSION
 	__global__ void ComputeDistancesToFixedPoints_Kernel(
 		float* distancesToFixedPoints,
 		CONST(glm::vec3*) positions,
@@ -118,33 +118,23 @@ namespace Velvet
 		float minDistance = maxDistance; // Start with max distance
 		glm::vec3 particlePos = positions[id];
 		
+		 // ?? FIXED: Instead of processing all attachment constraints (which are now N¡ÁM),
+		// directly iterate through unique slot positions to find the actual fixed points
+		
 		// Track which slots we've already processed to avoid duplicates
-		int processedSlots[16]; // Support up to 16 unique fixed points
-		int numProcessedSlots = 0;
+		bool processedSlots[32]; // Support up to 32 unique slots
+		for (int i = 0; i < 32; i++) processedSlots[i] = false;
 		
 		// Find minimum distance to any unique fixed point position
 		for (int i = 0; i < numAttachments; i++)
 		{
 			int slotID = attachSlotIDs[i];
 			
-			// Check if we've already processed this slot
-			bool alreadyProcessed = false;
-			for (int j = 0; j < numProcessedSlots; j++)
-			{
-				if (processedSlots[j] == slotID)
-				{
-					alreadyProcessed = true;
-					break;
-				}
-			}
+			 // Skip if we've already processed this slot or if slot ID is invalid
+			if (slotID >= 32 || processedSlots[slotID]) continue;
 			
-			if (alreadyProcessed) continue;
-			
-			// Add this slot to processed list
-			if (numProcessedSlots < 16)
-			{
-				processedSlots[numProcessedSlots++] = slotID;
-			}
+			// Mark this slot as processed
+			processedSlots[slotID] = true;
 			
 			// Get the fixed point position from slot positions
 			glm::vec3 fixedPos = attachSlotPositions[slotID];
@@ -181,6 +171,55 @@ namespace Velvet
 		CUDA_CALL(ComputeDistancesToFixedPoints_Kernel, numParticles)(
 			distancesToFixedPoints, positions, attachParticleIDs, attachSlotPositions, attachSlotIDs, 
 			numParticles, numAttachments, maxDistance);
+	}
+
+	// ?? NEW: Simple distance calculation kernel using actual fixed points
+	__global__ void ComputeDistancesToActualFixedPoints_Kernel(
+		float* distancesToFixedPoints,
+		CONST(glm::vec3*) positions,
+		CONST(glm::vec3*) actualFixedPoints,
+		const uint numParticles,
+		const uint numFixedPoints,
+		const float maxDistance)
+	{
+		GET_CUDA_ID(id, numParticles);
+		
+		float minDistance = maxDistance; // Start with max distance
+		glm::vec3 particlePos = positions[id];
+		
+		// Find minimum distance to any actual fixed point
+		for (int i = 0; i < numFixedPoints; i++)
+		{
+			glm::vec3 fixedPos = actualFixedPoints[i];
+			float distance = glm::length(particlePos - fixedPos);
+			minDistance = min(minDistance, distance);
+			
+			// Check if this particle is very close to the fixed point (essentially fixed)
+			if (distance < 0.001f) // Very small threshold for "fixed" particles
+			{
+				minDistance = 0.0f;
+				break; // This particle is essentially at a fixed point
+			}
+		}
+		
+		// Store the minimum distance, clamped to maxDistance
+		distancesToFixedPoints[id] = min(minDistance, maxDistance);
+	}
+
+	void ComputeDistancesToActualFixedPoints(
+		float* distancesToFixedPoints,
+		CONST(glm::vec3*) positions,
+		CONST(glm::vec3*) actualFixedPoints,
+		const uint numParticles,
+		const uint numFixedPoints,
+		const float maxDistance)
+	{
+		if (numFixedPoints == 0) return; // No fixed points, keep default distances
+		
+		ScopedTimerGPU timer("Solver_ComputeSimpleDistances");
+		CUDA_CALL(ComputeDistancesToActualFixedPoints_Kernel, numParticles)(
+			distancesToFixedPoints, positions, actualFixedPoints, 
+			numParticles, numFixedPoints, maxDistance);
 	}
 
 	__device__ float ComputeDistanceWeight(float distanceToFixed, float maxDistance, float falloff)

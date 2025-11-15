@@ -352,10 +352,21 @@ void VtSimParams::OnGUI()
 		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Max Distance", &maxDistanceInfluence, 1.0f, 50.0f, "%.1f");
 		HelpMarker("Maximum distance considered for weight calculation (world units)");
 		
+		// Performance info section - Updated for cached approach
+		ImGui::Separator();
+		ImGui::Text("?? PERFORMANCE OPTIMIZATION:");
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? CACHED computation (computed ONCE at initialization)");
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Zero per-frame overhead");
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Based on initial positions relative to fixed points");
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Massive performance improvement vs per-frame calculation");
+		
+		ImGui::Separator();
 		ImGui::Text("How it works:");
-		ImGui::TextWrapped("- Vertices closer to fixed points move less");
-		ImGui::TextWrapped("- Vertices farther from fixed points move more");
-		ImGui::TextWrapped("- Higher falloff = stronger distance influence");
+		ImGui::TextWrapped("- Distance weights computed ONCE during initialization");
+		ImGui::TextWrapped("- Based on initial particle positions relative to fixed points");
+		ImGui::TextWrapped("- Vertices closer to fixed points move less (higher weight)");
+		ImGui::TextWrapped("- Weights remain constant throughout simulation");
+		ImGui::TextWrapped("- No per-frame computation = excellent performance!");
 		
 		ImGui::Indent(-15);
 	}
