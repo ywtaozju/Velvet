@@ -229,8 +229,9 @@ namespace Velvet
 			deltaCounts.push_back(newParticles, 0);
 			invMasses.push_back(newParticles, 1.0f);
 
-			// Initialize distance-based weight buffers with default values
-			distancesToFixedPoints.push_back(newParticles, Global::simParams.maxDistanceInfluence);
+			 // ?? FIXED: Initialize distance-based weight buffers with 1.0 (max normalized distance) as default
+			 // This ensures that if distance weights are not computed, particles behave as if they're far from fixed points
+			distancesToFixedPoints.push_back(newParticles, 1.0f);
 
 			// Initialize buffer datas
 			InitializePositions(positions, prevNumParticles, newParticles, modelMatrix);
@@ -248,35 +249,41 @@ namespace Velvet
 			return prevNumParticles;
 		}
 
-		// ?? NEW FUNCTION: Initialize distance-based weights ONCE after all attachments are set
+		 // ?? UPDATED FUNCTION: Initialize distance-based weights with automatic max distance calculation
 		void InitializeDistanceBasedWeights()
 		{
+			printf("Info(DistanceWeights): InitializeDistanceBasedWeights called...\n");
+			printf("Info(DistanceWeights): useDistanceBasedWeights = %s\n", Global::simParams.useDistanceBasedWeights ? "TRUE" : "FALSE");
+			printf("Info(DistanceWeights): actualFixedPoints.size() = %d\n", (int)actualFixedPoints.size());
+			
 			if (!Global::simParams.useDistanceBasedWeights || actualFixedPoints.size() == 0) 
 			{
 				printf("Info(DistanceWeights): Distance-based weights disabled or no fixed points registered\n");
+				printf("Info(DistanceWeights): All particles will use default distance value 1.0\n");
 				return;
 			}
 
 			Timer::StartTimer("INIT_DISTANCE_WEIGHTS");
 			
-			printf("Info(DistanceWeights): Computing distance-based weights ONCE during initialization...\n");
+			printf("Info(DistanceWeights): Computing distance-based weights with AUTO max distance calculation...\n");
 			printf("Info(DistanceWeights): Particles: %d, Fixed Points: %d\n", 
 				Global::simParams.numParticles, (int)actualFixedPoints.size());
 
-			// Compute distances ONCE using initial positions and actual fixed points
+			 // ?? UPDATED: Auto-calculate max distance and normalize all distances
 			ComputeDistancesToActualFixedPoints(
 				distancesToFixedPoints.data(),
 				(glm::vec3*)positions,
 				actualFixedPoints.data(),
 				Global::simParams.numParticles,
 				(uint)actualFixedPoints.size(),
-				Global::simParams.maxDistanceInfluence);
+				0.0f); // maxDistance parameter is no longer used
 
 			cudaDeviceSynchronize(); // Ensure computation is complete
 
 			double time = Timer::EndTimer("INIT_DISTANCE_WEIGHTS") * 1000;
 			printf("Info(DistanceWeights): Distance-based weights initialized in %.2f ms\n", time);
-			printf("Info(DistanceWeights): Weights are now CACHED and will NOT be recomputed every frame!\n");
+			printf("Info(DistanceWeights): ? NO manual configuration needed - distances AUTO-NORMALIZED!\n");
+			printf("Info(DistanceWeights): Weights are CACHED and will NOT be recomputed every frame!\n");
 		}
 
 		void AddStretch(int idx1, int idx2, float distance)
@@ -308,12 +315,12 @@ namespace Velvet
 			bendAngles.push_back(angle);
 		}
 
-		// ?? NEW: Register an actual fixed point for distance-based weight calculation
+		 // ?? NEW: Register an actual fixed point for distance-based weight calculation
 		void RegisterFixedPoint(glm::vec3 fixedPos)
 		{
 			actualFixedPoints.push_back(fixedPos);
-			printf("Info(ClothSolver): Registered fixed point at (%.2f, %.2f, %.2f)\n", 
-				fixedPos.x, fixedPos.y, fixedPos.z);
+			printf("Info(ClothSolver): Registered fixed point at (%.2f, %.2f, %.2f) - Total: %d\n", 
+				fixedPos.x, fixedPos.y, fixedPos.z, (int)actualFixedPoints.size());
 		}
 
 		void UpdateColliders(vector<Collider*>& colliders)
@@ -532,9 +539,9 @@ namespace Velvet
 					// Add distance-based weight debugging
 					if (Global::simParams.useDistanceBasedWeights && distancesToFixedPoints.size() > particleIndex1)
 					{
-						ImGui::Text(fmt::format("Distance to Fixed Points: {:.3f}", distancesToFixedPoints[particleIndex1]).c_str());
-						float weight = ComputeDistanceWeightHost(distancesToFixedPoints[particleIndex1], 
-							Global::simParams.maxDistanceInfluence, Global::simParams.distanceWeightFalloff);
+						float normalizedDist = distancesToFixedPoints[particleIndex1];
+						ImGui::Text(fmt::format("Normalized Distance: {:.3f}", normalizedDist).c_str());
+						float weight = ComputeDistanceWeightHost(normalizedDist, 1.0f, Global::simParams.distanceWeightFalloff);
 						ImGui::Text(fmt::format("Computed Weight: {:.3f}", weight).c_str());
 					}
 					else
@@ -568,10 +575,11 @@ namespace Velvet
 				if (ImGui::CollapsingHeader("Distance-Based Weights Debug"))
 				{
 					ImGui::Text("System Status: %s", Global::simParams.useDistanceBasedWeights ? "ENABLED" : "DISABLED");
-					ImGui::Text("Max Distance Influence: %.2f", Global::simParams.maxDistanceInfluence);
+					ImGui::Text("?? Max Distance: AUTO-CALCULATED (no manual config needed!)");
 					ImGui::Text("Distance Weight Falloff: %.2f", Global::simParams.distanceWeightFalloff);
 					ImGui::Text("Attachment Points Count: %d", (int)attachParticleIDs.size());
 					ImGui::Text("Distance Buffer Size: %d", (int)distancesToFixedPoints.size());
+					ImGui::Text("?? All distances automatically normalized to [0,1] range");
 					
 					if (attachParticleIDs.size() > 0)
 					{
@@ -591,19 +599,18 @@ namespace Velvet
 						ImGui::Indent(-15);
 					}
 
-					// Show some sample distance values
+					// Show some sample distance values (now normalized)
 					if (distancesToFixedPoints.size() > 0 && Global::simParams.useDistanceBasedWeights)
 					{
-						ImGui::Text("Sample Distance Values:");
+						ImGui::Text("Sample Normalized Distance Values:");
 						ImGui::Indent(15);
 						int sampleCount = min(10, (int)distancesToFixedPoints.size());
 						for (int i = 0; i < sampleCount; i++)
 						{
 							int idx = i * (int)distancesToFixedPoints.size() / sampleCount;
-							float distance = distancesToFixedPoints[idx];
-							float weight = ComputeDistanceWeightHost(distance, 
-								Global::simParams.maxDistanceInfluence, Global::simParams.distanceWeightFalloff);
-							ImGui::Text("  Particle %d: Dist=%.3f, Weight=%.3f", idx, distance, weight);
+							float normalizedDistance = distancesToFixedPoints[idx];
+							float weight = ComputeDistanceWeightHost(normalizedDistance, 1.0f, Global::simParams.distanceWeightFalloff);
+							ImGui::Text("  Particle %d: NormDist=%.3f, Weight=%.3f", idx, normalizedDistance, weight);
 						}
 						ImGui::Indent(-15);
 					}
@@ -629,12 +636,11 @@ namespace Velvet
 		}
 
 	private:
-		// Host-side weight calculation for debugging
-		float ComputeDistanceWeightHost(float distanceToFixed, float maxDistance, float falloff) const
+		// Host-side weight calculation for debugging (updated for normalized distances)
+		float ComputeDistanceWeightHost(float normalizedDistance, float maxDistance, float falloff) const
 		{
-			// Convert distance to weight - closer to fixed point = higher weight (less movement)
-			// Normalize distance to [0,1] range
-			float normalizedDistance = min(distanceToFixed / maxDistance, 1.0f);
+			// ?? UPDATED: Distance is pre-normalized to [0,1] range
+			// normalizedDistance: 0 = at fixed point, 1 = farthest from any fixed point
 			
 			// Invert the distance so closer points get higher weights
 			// Apply falloff - higher falloff means more sharp transition

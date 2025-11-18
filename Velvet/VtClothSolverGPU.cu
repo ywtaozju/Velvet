@@ -173,7 +173,7 @@ namespace Velvet
 			numParticles, numAttachments, maxDistance);
 	}
 
-	// ?? NEW: Simple distance calculation kernel using actual fixed points
+	// ?? NEW: Enhanced distance calculation with automatic max distance computation
 	__global__ void ComputeDistancesToActualFixedPoints_Kernel(
 		float* distancesToFixedPoints,
 		CONST(glm::vec3*) positions,
@@ -202,8 +202,28 @@ namespace Velvet
 			}
 		}
 		
-		// Store the minimum distance, clamped to maxDistance
-		distancesToFixedPoints[id] = min(minDistance, maxDistance);
+		// Store the raw distance (not clamped yet - we'll normalize later)
+		distancesToFixedPoints[id] = minDistance;
+	}
+
+	// ?? NEW: Kernel to normalize distances using computed max distance
+	__global__ void NormalizeDistances_Kernel(
+		float* distancesToFixedPoints,
+		const uint numParticles,
+		const float maxDistance)
+	{
+		GET_CUDA_ID(id, numParticles);
+		
+		if (maxDistance > 0.0f)
+		{
+			// Normalize the distance by the actual maximum distance found
+			distancesToFixedPoints[id] = min(distancesToFixedPoints[id] / maxDistance, 1.0f);
+		}
+		else
+		{
+			// If max distance is 0, set all distances to 0
+			distancesToFixedPoints[id] = 0.0f;
+		}
 	}
 
 	void ComputeDistancesToActualFixedPoints(
@@ -216,17 +236,33 @@ namespace Velvet
 	{
 		if (numFixedPoints == 0) return; // No fixed points, keep default distances
 		
-		ScopedTimerGPU timer("Solver_ComputeSimpleDistances");
+		ScopedTimerGPU timer("Solver_ComputeAutoDistances");
+		
+		// Step 1: Compute raw distances (not clamped)
 		CUDA_CALL(ComputeDistancesToActualFixedPoints_Kernel, numParticles)(
 			distancesToFixedPoints, positions, actualFixedPoints, 
-			numParticles, numFixedPoints, maxDistance);
+			numParticles, numFixedPoints, 1000000.0f); // Use large value as initial max
+		
+		cudaDeviceSynchronize();
+		
+		// Step 2: Find the actual maximum distance using Thrust
+		thrust::device_ptr<float> thrust_distances(distancesToFixedPoints);
+		float actualMaxDistance = *thrust::max_element(thrust_distances, thrust_distances + numParticles);
+		
+		// Step 3: Normalize all distances using the computed maximum
+		CUDA_CALL(NormalizeDistances_Kernel, numParticles)(
+			distancesToFixedPoints, numParticles, actualMaxDistance);
+		
+		cudaDeviceSynchronize();
+		
+		printf("Info(DistanceWeights): Auto-computed max distance: %.3f units\n", actualMaxDistance);
+		printf("Info(DistanceWeights): All distances automatically normalized to [0,1] range\n");
 	}
 
-	__device__ float ComputeDistanceWeight(float distanceToFixed, float maxDistance, float falloff)
+	__device__ float ComputeDistanceWeight(float normalizedDistance, float maxDistance, float falloff)
 	{
-		// Convert distance to weight - closer to fixed point = higher weight (less movement)
-		// Normalize distance to [0,1] range
-		float normalizedDistance = min(distanceToFixed / maxDistance, 1.0f);
+		// ?? UPDATED: Distance is now pre-normalized to [0,1] range, so we don't need maxDistance
+		// normalizedDistance is already in [0,1] where 0 = at fixed point, 1 = farthest from any fixed point
 		
 		// Invert the distance so closer points get higher weights
 		// Apply falloff - higher falloff means more sharp transition
@@ -259,12 +295,13 @@ namespace Velvet
 		
 		if (d_params.useDistanceBasedWeights)
 		{
-			// Use distance-based weights
-			float dist1 = distancesToFixedPoints[idx1];
-			float dist2 = distancesToFixedPoints[idx2];
+			// Use distance-based weights (distances are now pre-normalized to [0,1])
+			float normalizedDist1 = distancesToFixedPoints[idx1];
+			float normalizedDist2 = distancesToFixedPoints[idx2];
 			
-			w1 = ComputeDistanceWeight(dist1, d_params.maxDistanceInfluence, d_params.distanceWeightFalloff);
-			w2 = ComputeDistanceWeight(dist2, d_params.maxDistanceInfluence, d_params.distanceWeightFalloff);
+			// Since distances are pre-normalized, we don't need maxDistanceInfluence anymore
+			w1 = ComputeDistanceWeight(normalizedDist1, 1.0f, d_params.distanceWeightFalloff);
+			w2 = ComputeDistanceWeight(normalizedDist2, 1.0f, d_params.distanceWeightFalloff);
 		}
 		else
 		{

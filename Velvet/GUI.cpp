@@ -349,24 +349,25 @@ void VtSimParams::OnGUI()
 		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Weight Falloff", &distanceWeightFalloff, 0.5f, 5.0f, "%.1f");
 		HelpMarker("Falloff exponent for distance-based weights (higher = more influence for closer points)");
 		
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Max Distance", &maxDistanceInfluence, 1.0f, 50.0f, "%.1f");
-		HelpMarker("Maximum distance considered for weight calculation (world units)");
+		// ?? REMOVED: Max Distance parameter - now AUTO-CALCULATED!
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Max Distance: AUTO-CALCULATED");
+		HelpMarker("Maximum distance is automatically computed from cloth geometry - no manual configuration needed!");
 		
-		// Performance info section - Updated for cached approach
+		// Performance info section - Updated for auto-calculation
 		ImGui::Separator();
 		ImGui::Text("?? PERFORMANCE OPTIMIZATION:");
 		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? CACHED computation (computed ONCE at initialization)");
 		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Zero per-frame overhead");
-		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Based on initial positions relative to fixed points");
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? AUTO-NORMALIZED distances to [0,1] range");
 		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "? Massive performance improvement vs per-frame calculation");
 		
 		ImGui::Separator();
 		ImGui::Text("How it works:");
 		ImGui::TextWrapped("- Distance weights computed ONCE during initialization");
-		ImGui::TextWrapped("- Based on initial particle positions relative to fixed points");
+		ImGui::TextWrapped("- Max distance automatically found from cloth geometry");
+		ImGui::TextWrapped("- All distances normalized to [0,1] range automatically");
 		ImGui::TextWrapped("- Vertices closer to fixed points move less (higher weight)");
-		ImGui::TextWrapped("- Weights remain constant throughout simulation");
-		ImGui::TextWrapped("- No per-frame computation = excellent performance!");
+		ImGui::TextWrapped("- No manual configuration required - just enable and go!");
 		
 		ImGui::Indent(-15);
 	}
