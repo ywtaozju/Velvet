@@ -346,7 +346,7 @@ void VtSimParams::OnGUI()
 	{
 		ImGui::Indent(15);
 		
-		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Weight Falloff", &distanceWeightFalloff, 0.5f, 5.0f, "%.1f");
+		IMGUI_LEFT_LABEL(ImGui::SliderFloat, "Weight Falloff", &distanceWeightFalloff, 0.0f, 20.0f, "%.1f");
 		HelpMarker("Falloff exponent for distance-based weights (higher = more influence for closer points)");
 		
 		// ?? REMOVED: Max Distance parameter - now AUTO-CALCULATED!
